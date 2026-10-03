@@ -468,6 +468,35 @@ class Keymap {
       this.Map("*" a " up", h, , winTitle, conditionType)
     }
   }
+
+  /**
+   * 把按键映射为 MIDI 音符: 按下发声 (NoteOn), 松开停声 (NoteOff).
+   * 由模板生成的调用形如: km.MapMidi("*q", 60, 1, 100, , "ahk_exe code.exe", 1)
+   * @param hotkeyName 热键名 (如 "*q")
+   * @param note 音符号 0-127
+   * @param channel MIDI 通道 1-16
+   * @param velocity 力度 1-127
+   * @param keymapToLock 动作触发后要锁定的 keymap; 该参数刻意与 Map 对齐,
+   *        以便 Go 侧 ", , winTitle, conditionType" 的空占位自然落在此处
+   * @param winTitle 生效的窗口标题/条件
+   * @param conditionType 窗口条件类型
+   */
+  MapMidi(hotkeyName, note, channel := 1, velocity := 100, keymapToLock := false, winTitle := "", conditionType := 0) {
+    ; singlePress 没有物理松开语义, 注册会导致 MIDI 卡音, 直接跳过
+    if InStr(hotkeyName, "singlePress") {
+      return
+    }
+    downHandler(thisHotkey) {
+      MidiNoteOn(note, channel, velocity)
+    }
+    upHandler(thisHotkey) {
+      MidiNoteOff(note, channel)
+    }
+    ; 成对注册 down / up, 对标 RemapInHotIf;
+    ; keymapToLock 只作用于按下, 松开时不重复锁定
+    this.Map(hotkeyName, downHandler, keymapToLock, winTitle, conditionType)
+    this.Map(hotkeyName . " up", upHandler, false, winTitle, conditionType)
+  }
 }
 
 class MouseKeymap extends Keymap {

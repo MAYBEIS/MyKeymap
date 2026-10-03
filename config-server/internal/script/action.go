@@ -21,6 +21,7 @@ var actionMap = map[int]func(Action, bool) string{
 	7:        textFeatures7,
 	8:        builtinFunctions8,
 	9:        mykeymapActions9,
+	10:       midiNote10,
 }
 
 func actionToHotkey(action Action) string {
@@ -179,6 +180,22 @@ func mykeymapActions9(a Action, inAbbrContext bool) string {
 	}
 
 	return fmt.Sprintf(`km.Map("%[1]s", _ => %s%s)`, a.Hotkey, call, ctx)
+}
+
+func midiNote10(a Action, inAbbrContext bool) string {
+	if inAbbrContext {
+		return ""
+	}
+	channel := a.MidiChannel
+	if channel == 0 {
+		channel = 1
+	}
+	velocity := a.MidiVelocity
+	if velocity == 0 {
+		velocity = 100
+	}
+	return fmt.Sprintf(`km.MapMidi("%[1]s", %[2]d, %[3]d, %[4]d%[5]s)`,
+		a.Hotkey, a.MidiNote, channel, velocity, Cfg.GetHotkeyContext(a))
 }
 
 func mouseActions4(a Action, inAbbrContext bool) string {

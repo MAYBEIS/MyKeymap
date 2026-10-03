@@ -26,6 +26,10 @@ TrayMenuHandler(ItemName, ItemPos, MyMenu) {
  */
 MyKeymapExit(ExitReason?, ExitCode?) {
   ProcessClose("MyKeymap-CommandInput.exe")
+  ; 退出前释放 MIDI: 先发 All Notes Off, 再关闭端口, 防止按键未松导致卡音.
+  ; Midi.ahk 可能未加载 (如精简构建), 用 try 做存在性保护, 避免报错中断退出.
+  try MidiAllNotesOff()
+  try MidiClose()
   ExitApp
 }
 

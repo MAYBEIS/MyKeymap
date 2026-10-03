@@ -8,6 +8,7 @@
 #Include lib/KeymapManager.ahk
 #Include lib/InputTipWindow.ahk
 #Include lib/Utils.ahk
+#Include lib/Midi.ahk
 
 ; #WinActivateForce   ; 先关了遇到相关问题再打开试试
 ; InstallKeybdHook    ; 这个可以重装 keyboard hook, 提高自己的 hook 优先级, 以后可能会用到
@@ -29,6 +30,7 @@ OnExit(MyKeymapExit)
 
 InitKeymap()
 {
+  MidiInit("MykeyMap-Midi")
   taskSwitch := TaskSwitchKeymap("e", "d", "s", "f", "c", "space")
   mouseTip := false
   slow := MouseKeymap("slow mouse", false, mouseTip, 10, 13, "T0.13", "T0.01", 1, "T0.2", "T0.03")
@@ -142,7 +144,6 @@ InitKeymap()
   km.RemapKey("f", "right")
   km.RemapKey("g", "end")
   km.Map("*k", _ => HoldDownModifierKey("LShift"))
-  km.RemapKey("q", "appskey")
   km.RemapKey("r", "tab")
   km.RemapKey("s", "left")
   km.Map("*t", _ => (Send("{home}+{end}{backspace}")))
@@ -151,6 +152,7 @@ InitKeymap()
   km.RemapKey("x", "esc")
   km.Map("*z", _ => (Send("{blind}^{left}")))
   km.Map("*space", _ => (Send("{blind}{enter}")))
+  km.MapMidi("*q", 3, 1, 100)
 
   ; 3 模式
   km10 := KeymapManager.NewKeymap("*3", "3 模式", "", "")
@@ -173,10 +175,11 @@ InitKeymap()
   km.RemapKey("r", "F12")
   km.RemapKey("t", "Volume_Up")
   km.RemapKey("u", "4")
-  km.RemapKey("w", "Volume_Down")
   km.RemapKey("space", "F1")
   km.Map("singlePress", _ => (Send("{blind}{3}")))
   km.Map("*/", km.ToggleLock)
+  km.MapMidi("*q", 28, 1, 100)
+  km.MapMidi("*w", 3, 1, 100)
 
   ; 分号模式( ; )
   km13 := KeymapManager.NewKeymap("*;", "分号模式( `; )", "", "")
@@ -204,6 +207,7 @@ InitKeymap()
   km.Map("*y", _ => (Send("{blind}@")))
   km.Map("*z", _ => (Send("{blind}\")))
   km.Map("singlePress", _ => EnterSemicolonAbbr(semiHook, semiHookAbbrWindow))
+  km.MapMidi("*q", 23, 1, 100)
 
   ; 句号模式( . )
   km14 := KeymapManager.NewKeymap("*.", "句号模式( . )", "", "")
