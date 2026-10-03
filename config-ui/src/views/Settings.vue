@@ -395,6 +395,9 @@ function normalizeKeyName(hotkey: string) : string {
               <v-col>
                 <v-card title="MIDI" min-width="180">
                   <v-card-text>
+                    <v-alert type="warning" variant="tonal" density="compact" class="mb-2 text-body-2">
+                      {{ translate('label:417') }}
+                    </v-alert>
                     <v-combobox v-if="midiPortsAvailable" v-model="midiPortName" :items="midiPorts"
                                  variant="underlined" color="primary"
                                  autocomplete="off" placeholder="MykeyMap-Midi" :label="translate('label:414')"></v-combobox>

@@ -134,7 +134,8 @@ export const languageMap = {
   413: { zh: "力度", en: "Velocity" },
   414: { zh: "MIDI 端口名", en: "MIDI Port Name" },
   415: { zh: "未检测到 MIDI 端口，请手动输入端口名，或确认设备已连接", en: "No MIDI ports detected. Enter the port name manually or check the device connection." },
-  416: { zh: "端口名可留空，默认使用 MykeyMap-Midi；也可在虚拟端口工具中创建同名端口", en: "Leave empty to use the default port name MykeyMap-Midi; you can also create a virtual port with the same name." },
+  416: { zh: "端口名可留空，默认使用 MykeyMap-Midi。需安装并保持 loopMIDI 运行，并在其中创建名为 MykeyMap-Midi 的端口，否则 MIDI 动作不会生效", en: "Leave empty to use the default port name MykeyMap-Midi. loopMIDI must be installed and running, with a port named MykeyMap-Midi created in it, otherwise MIDI actions will not work." },
+  417: { zh: "⚠️ 需安装并运行 loopMIDI，并在其中创建名为 MykeyMap-Midi 的端口；未创建时 MIDI 动作不会生效", en: "⚠️ loopMIDI must be installed and running, with a port named MykeyMap-Midi created in it; MIDI actions will not work without it." },
 
   // Settings
   501: { zh: "名称", en: "Name" },

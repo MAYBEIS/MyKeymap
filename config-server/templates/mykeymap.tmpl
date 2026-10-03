@@ -30,7 +30,10 @@ OnExit(MyKeymapExit)
 
 InitKeymap()
 {
-  MidiInit({{ ahkString .Options.Midi.PortName }})
+  ; 端口不存在时 MIDI 动作不生效, 提示用户去 loopMIDI 创建 (不自动创建/不回退)
+  if !MidiInit({{ ahkString .Options.Midi.PortName }}) {
+    MidiShowNotReadyTip()
+  }
   taskSwitch := TaskSwitchKeymap("e", "d", "s", "f", "c", "space")
   mouseTip := {{ if .Options.Mouse.ShowTip }}InputTipWindow("{{ .Options.Mouse.TipSymbol }}",,,, 20, 16){{ else }}false{{ end }}
   slow := MouseKeymap("slow mouse", {{ .Options.Mouse.KeepMouseMode }}, mouseTip, {{ .Options.Mouse.SlowSingle }}, {{ .Options.Mouse.SlowRepeat }}, "T{{ .Options.Mouse.Delay1 }}", "T{{ .Options.Mouse.Delay2 }}", {{ .Options.Scroll.OnceLineCount }}, "T{{ .Options.Scroll.Delay1 }}", "T{{ .Options.Scroll.Delay2 }}")
