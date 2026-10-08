@@ -400,9 +400,9 @@ function normalizeKeyName(hotkey: string) : string {
                     </v-alert>
                     <v-combobox v-if="midiPortsAvailable" v-model="midiPortName" :items="midiPorts"
                                  variant="underlined" color="primary"
-                                 autocomplete="off" placeholder="MykeyMap-Midi" :label="translate('label:414')"></v-combobox>
+                                 autocomplete="off" placeholder="loopMIDI Port" :label="translate('label:414')"></v-combobox>
                     <v-text-field v-else v-model="midiPortName" variant="underlined" color="primary"
-                                  autocomplete="off" placeholder="MykeyMap-Midi" :label="translate('label:414')"></v-text-field>
+                                  autocomplete="off" placeholder="loopMIDI Port" :label="translate('label:414')"></v-text-field>
                     <v-label class="text-medium-emphasis mt-1">
                       {{ translate('label:416') }}
                     </v-label>

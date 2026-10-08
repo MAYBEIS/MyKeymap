@@ -52,7 +52,7 @@ type Midi struct {
 }
 ```
 
-- 端口名默认值为 `MykeyMap-Midi`：`PortName` 为空时由后端 [`ParseConfig`](config-server/internal/script/config.go:57) 缺省填入（决策记录，见下）。AHK 侧对该端口名做**精确匹配**；匹配不到即视为不可用，**不自动创建、不回退**，启动时提示用户去 loopMIDI 创建该端口。
+- 端口名默认值为 `loopMIDI Port`：`PortName` 为空时由后端 [`ParseConfig`](config-server/internal/script/config.go:57) 缺省填入（决策记录，见下）。AHK 侧对该端口名做**精确匹配**；匹配不到即视为不可用，**不自动创建、不回退**，启动时提示用户去 loopMIDI 创建该端口。
 - 前端在设置页新增「MIDI」分区：开关 + 端口名输入框。
 
 ## 4. 接入点清单（逐文件）
@@ -149,7 +149,7 @@ MapMidi(hotkeyName, note, channel := 1, velocity := 100, keymapToLock := false, 
 
 - `Options.Midi` 最终只保留 `PortName`，设计稿中的 `Enabled` 开关未实现。
 - `midiNote10` 对 `midiChannel == 0` / `midiVelocity == 0` 额外做了兜底为 1 / 100 的处理。
-- 默认端口名决策：`PortName` 为空时后端缺省为 `MykeyMap-Midi`（而非保持为空交给 AHK 自动选择），使用户不填也能得到一个稳定、可预期的默认端口名；设置页以 placeholder + 说明文案提示该默认值。
+- 默认端口名决策：`PortName` 为空时后端缺省为 `loopMIDI Port`（而非保持为空交给 AHK 自动选择），使用户不填也能得到一个稳定、可预期的默认端口名；设置页以 placeholder + 说明文案提示该默认值。
 
 ### 7.1 方案变更（实机验证后）：自动创建 → 精确匹配 + 提示
 
@@ -163,6 +163,6 @@ MapMidi(hotkeyName, note, channel := 1, velocity := 100, keymapToLock := false, 
 - [`MidiInit(portName)`](bin/lib/Midi.ahk:60) 仅枚举 winmm 输出设备精确匹配端口名（忽略大小写）：匹配到 → `midiOutOpen` 返回 `true`；匹配不到或打开失败 → 返回 `false` 并写入 `g_MidiLastError`（不回退）。
 - `MidiSend` 恢复为仅 `midiOutShortMsg`；对外签名 `MidiNoteOn/MidiNoteOff/MidiAllNotesOff/MidiClose` 不变。
 - 新增 [`MidiShowNotReadyTip()`](bin/lib/Midi.ahk:155)，端口不可用时用项目既有 `Tip()` 提示「请在 loopMIDI 中创建该端口并保持其运行」；模板 [`InitKeymap`](config-server/templates/mykeymap.tmpl:31) 判断 `MidiInit` 返回值，失败即调用该提示。
-- 设置页与文档同步强调「需安装并保持 loopMIDI 运行，并在其中创建名为 `MykeyMap-Midi` 的端口」。
+- 设置页与文档同步强调「需安装并保持 loopMIDI 运行，并在其中创建名为 `loopMIDI Port` 的端口」。
 
 面向用户与开发者的文档见 [`doc/midi.md`](doc/midi.md:1) 与 [`doc/midi-dev.md`](doc/midi-dev.md:1)。

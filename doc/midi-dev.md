@@ -73,11 +73,11 @@ flowchart TD
 
 ```go
 type Midi struct {
-    PortName string `json:"portName"` // 例如 "MykeyMap-Midi"
+    PortName string `json:"portName"` // 例如 "loopMIDI Port"
 }
 ```
 
-`Options.Midi` 参与 `PUT /config` 的读写。**`PortName` 为空字符串时，[`ParseConfig`](config-server/internal/script/config.go:57) 会将其缺省为 `MykeyMap-Midi`**（与 [`Mouse.TipSymbol`](config-server/internal/script/config.go:70)、`CommandInputSkin` 的缺省处理写在一起），因此模板渲染出的 `MidiInit(...)` 始终会收到一个非空端口名。AHK 侧对该端口名做**精确匹配**；匹配不到即返回 `false`，**不自动创建、不回退**，由模板调用 `MidiShowNotReadyTip()` 提示用户去 loopMIDI 创建该端口。
+`Options.Midi` 参与 `PUT /config` 的读写。**`PortName` 为空字符串时，[`ParseConfig`](config-server/internal/script/config.go:57) 会将其缺省为 `loopMIDI Port`**（与 [`Mouse.TipSymbol`](config-server/internal/script/config.go:70)、`CommandInputSkin` 的缺省处理写在一起），因此模板渲染出的 `MidiInit(...)` 始终会收到一个非空端口名。AHK 侧对该端口名做**精确匹配**；匹配不到即返回 `false`，**不自动创建、不回退**，由模板调用 `MidiShowNotReadyTip()` 提示用户去 loopMIDI 创建该端口。
 
 ## 4. 关键机制
 

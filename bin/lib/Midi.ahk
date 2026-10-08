@@ -141,7 +141,7 @@ MidiOpenWinmm(devID, portName) {
  */
 MidiShowNotReadyTip() {
   global g_MidiRequestedPortName
-  name := (g_MidiRequestedPortName != "") ? g_MidiRequestedPortName : "MykeyMap-Midi"
+  name := (g_MidiRequestedPortName != "") ? g_MidiRequestedPortName : "loopMIDI Port"
   msg := '未找到 MIDI 端口 "' name '", 请在 loopMIDI 中创建该端口并保持其运行'
   try Tip(msg, -3000)
 }

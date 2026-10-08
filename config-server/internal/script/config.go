@@ -93,7 +93,7 @@ func ParseConfig(file string) (*Config, error) {
 		}
 	}
 	if config.Options.Midi.PortName == "" {
-		config.Options.Midi.PortName = "MykeyMap-Midi"
+		config.Options.Midi.PortName = "loopMIDI Port"
 	}
 
 	return &config, nil
