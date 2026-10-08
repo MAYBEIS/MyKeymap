@@ -16,8 +16,81 @@
 > | 缩放策略 | 策略 (a) 按位移主轴自动选边/角（`|dx|>2|dy|` 改左右、`|dy|>2|dx|` 改上下、否则改角） |
 > | 前端 | [`Window.vue`](config-ui/src/components/actions/Window.vue:23) `group2` 追加 17/18；标签 1701/1702（[`language-map.ts`](config-ui/src/store/language-map.ts:24)） |
 > | 生成形态 | `km.Map("<Hotkey>", _ => <Start><ctx>), km.Map("<Hotkey> up", _ => <Stop><ctx>)` |
-> | DPI 处理 | 拖拽会话内**不切换**线程上下文, 全程沿用主脚本启动时的 `PER_MONITOR_AWARE(-3)`, 读光标与读写窗口同上下文 (见 §3.6) |
+> | 坐标系 | **全程原生 Win32 物理屏幕坐标**: `GetCursorPos`(读光标) / `GetWindowRect`(读窗口) / `SetWindowPos`(写窗口), 与 AHK `CoordMode` 线程局部性、AHK DPI 层无关 (见 §0、§3.6) |
+> | DPI 处理 | 每帧 `DragHarmonizeDpi()` 统一到 `PER_MONITOR_AWARE(-3)` 并 `DragRestoreDpi()` 复原, 杜绝会话内上下文漂移 (见 §0、§3.6) |
+> | 去抖 | 目标矩形与上一帧一致(≥1px 才写)则跳过; `SWP_NOSIZE\|SWP_NOZORDER\|SWP_NOACTIVATE`(移动) / `SWP_NOMOVE\|SWP_NOZORDER\|SWP_NOACTIVATE`(缩放) |
+> | 调试日志 | `DRAG_DEBUG`(默认 `false`) → `bin/drag_debug.log`; `DRAG_TEST_MODE`(默认 `false`) 仅跳过按键兜底, 供真实坐标路径测试 |
 > | 文档补充 | `doc/` 下仅有图片资源、无窗口功能用户文档，未补充 |
+
+---
+
+## 零、修复复盘（2026-10-08，真实坐标路径）
+
+### 0.1 真实故障（用户实测）
+
+1. 移动窗口时窗口 **疯狂抖动**；
+2. 缩放窗口时 **按下瞬间即改变窗口边缘位置**（要求：按下瞬间绝不能变，必须等鼠标移动后按方向+距离改变）。
+
+### 0.2 根因：`CoordMode` 的**线程局部性**导致 Start / Poll 坐标系不一致
+
+> ⚠️ **上次“验证通过”无效的教训**：上次测试脚本 **mock/伪造了鼠标坐标**（注入 `DragReadPos` 之类），
+> 绕过了真实的 `MouseGetPos` 读取路径，因此真实的坐标不一致问题被完全掩盖。本次必须以
+> `SetCursorPos`/`GetCursorPos` **真实驱动光标、走产品真实读取路径**才复现出来。
+
+用真实坐标路径逐帧取证（`DRAG_DEBUG=true`，Test 1 从定时器线程调用 `Start` 且**不设** `CoordMode`）：
+
+```
+[Start move] ctx=18 cm=Screen | MouseGetPos=(1222,700) | ox=300 oy=250
+[Poll move]  ctx=18 cm=Client | mx=926 my=664 dx=-296 dy=-36 | tgt=(626,414)
+```
+
+- `Start` 运行在**热键线程**：`CoordMode("Mouse","Screen")` 生效，`A_CoordModeMouse=Screen`，`MouseGetPos=(1222,700)`。
+- `Poll` 由 `SetTimer` 建立的**定时器线程**执行：`CoordMode` 是 **thread-local**，定时器线程**不继承** Start 的设置，
+  其 `A_CoordModeMouse=Client`（AHK 默认值，相对**活动窗口**），于是 `MouseGetPos=(926,664)`——
+  与真实屏幕坐标 `(1222,700)` 相差一个“活动窗口客户区原点”的偏移。
+- 结果：`Poll` 首帧 `dx=-296`（暴走）⇒ 窗口瞬间大幅移动（跳变）；且 Client 读数的参照系（活动窗口）**随拖动一起移动**，
+  位移反馈回自身 ⇒ 往复振荡（**疯狂抖动**）。
+- 缩放同理：`[Start resize] cm=Screen` 记录基准，`[Poll resize] cm=Client dx=-296` ⇒ 首帧 `nw: 716→420`，即“按下瞬间改变边缘”。
+
+**补充**：本机为 **100% 缩放 / 96 DPI / 单显示器**（`A_ScreenDPI=96`、`SM_CXVIRTUALSCREEN=2560`），
+`MouseGetPos`↔`GetCursorPos`、`WinGetPos`↔`GetWindowRect` 在同一坐标系下**完全一致**。
+因此之前怀疑的“DPI/缩放不一致”在本机**不是**本次根因；真正的矛盾是 **CoordMode 的线程局部性**。
+（多显示器混合 DPI 下该线程局部性问题依然存在，方案 A 同时规避两类问题。）
+
+### 0.3 修复：全程原生 Win32 物理屏幕坐标（方案 A）
+
+- 读光标：`DragRawCursor()` → `GetCursorPos`（恒返回物理屏幕坐标，与线程/CoordMode/DPI 层无关）。
+- 读窗口：`DragRawRect()` → `GetWindowRect`。
+- 写窗口：`DragSetWindowPos()` → `SetWindowPos`，移动用 `SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE`(0x15)，
+  缩放用 `SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE`(0x16)。
+- DPI：`DragHarmonizeDpi()` 在 `Start` 与每帧 `Poll` 把本线程上下文统一为 `PER_MONITOR_AWARE(-3)`
+  （句柄值 `18`），算完立即 `DragRestoreDpi()` 复原。
+- 保留原始语义：死区 4px 内不写；移动“抓取点吸附光标”；缩放左上角固定 + 主轴 + 最小 `120x80`；
+  仅当目标矩形相对上一帧有实际变化时才写（去抖）；**绝不** `MouseMove`/`SetCursorPos`。
+
+### 0.4 真实坐标路径验证（修复前 → 修复后）
+
+驱动方式：`DllCall("SetCursorPos", ...)` 真实移动光标；`Start` 从定时器线程调用且**刻意不设 CoordMode**（即复现故障的条件）。
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| `Poll` 读取 | `cm=Client (926,664)`（错坐标系） | `cm` 无关, `GetCursorPos` 恒为物理屏幕坐标 |
+| 移动首帧 dx | **-296**（暴走跳变） | 死区内(0) 不写；超死区后 `dx` 为真实小幅值 |
+| 缩放首帧 | `716→420`（按下瞬间改变） | `716→716`（**按下瞬间不变**） |
+| 每帧 `err` | 坐标系错位 | `(0,0)` / `(0,0,0,0)`（目标=实际，逐帧精确） |
+
+自动化断言（[`tmp_drag/tmp_verify.ahk`] 真实坐标驱动，最终 `PASS=10 FAIL=0`）：
+
+- 移动：帧0 光标不动 ⇒ 窗口不变 `(922,450)==(922,450)`；`Δ窗口 ≈ Δ光标(≤1px)` 且尺寸不变；抓取偏移恒定（吸附光标）；静止连续两帧窗口不变（**无往复抖动**）。
+- 缩放：帧0 不变 `716x539`；水平 `Δ宽≈Δ光标x` 且高/左不变；垂直 `Δ高≈Δ光标y` 且宽/上不变；对角 `Δ宽≈Δ光标x 且 Δ高≈Δ光标y`；最小钳制 `120x80`；左上角固定 `(922,450)`。
+
+> 说明：自动化测试刻意人为移动光标以省时；产品代码**绝不**移动光标，真实使用时由用户鼠标驱动。
+
+### 0.5 结论与遗留
+
+- 根因**已定位并复现**、修复后断言全部通过。
+- 仍建议用户用**真实鼠标手感**做最终确认（尤其多显示器混合 DPI 环境；本机为 100% 单屏）。
+- 临时脚本与测试进程已清理；`DRAG_TEST_MODE` 默认关闭，不影响正常运行路径。
 
 ---
 
@@ -289,16 +362,21 @@ WinMove(x, y, w, h, hwnd)
 
 > **推荐**：默认 **策略 (a)**（符合用户“按方向改变”的描述），并把 **(b)** 作为可选项（若追求“零意外”）。**(c)** 复杂度最高，可作为后续增强。（见决策点 1）
 
-### 3.6 DPI 处理决策（2026-10-08 修订）
+### 3.6 DPI / 坐标系处理决策（2026-10-08 最终修订，见 §0）
 
-**结论**：拖拽会话内**不调用** `SetThreadDpiAwarenessContext`，全程使用主脚本启动时设置的 `PER_MONITOR_AWARE(-3)`（[`MyKeymap.ahk:17`](bin/MyKeymap.ahk:17)）。
+**结论（方案 A）**：**全程改用原生 Win32 物理屏幕坐标**——`GetCursorPos`(读光标) / `GetWindowRect`(读窗口) / `SetWindowPos`(写窗口)，
+并由 `DragHarmonizeDpi()` 在 `Start` 与每帧 `Poll` 显式把本线程上下文统一为 `PER_MONITOR_AWARE(-3)`（句柄 `18`），算完 `DragRestoreDpi()` 复原。
+
+**为什么不只用“会话内沿用 -3”**：仅统一 DPI 上下文**并不能**解决本次根因——
+根因是 AHK `CoordMode` 的**线程局部性**：`Start`(热键线程, Screen) 与 `Poll`(定时器线程, 默认 Client) 分属两个坐标系。
+改用 `GetCursorPos/GetWindowRect/SetWindowPos` 后，读写**完全绕开 AHK 的 CoordMode 层**，物理屏幕坐标恒定自洽（见 §0.2、§0.3）。
 
 **原因（实测发现的缺陷）**：早期实现按“读坐标用 `-3`、写 `WinMove` 用 `-1`”反复切换线程上下文，导致同一拖拽会话内：
 
 1. `StartDrag` 用 `-3` 记录的 `mx0` 与 `Poll` 中（上一帧遗留 `-1` 上下文下）读到的 `mx` 坐标系不一致，产生恒定偏移 ⇒ **按下即跳变 + 跟随偏移**（实测本机 125% 缩放下偏差约 0.67 倍）。
 2. 高频反复切换 `SetThreadDpiAwarenessContext` 在本环境导致 `MouseGetPos` 读数异常（出现 1500+ 的暴走值）。
 
-因此统一：**同一会话内读写全用 `-3`**，`mx0` / `mx` / 窗口 rect 均在同一坐标系，位移量自洽。多显示器不同缩放的最终观感仍需人工实测（列入人工验收）。
+因此统一：**同一会话内读写全用 `-3`**（`DragHarmonizeDpi`），`mx0` / `mx` / 窗口 rect 均取自原生 API 的物理屏幕坐标，位移量自洽。多显示器不同缩放的最终观感仍需人工实测（列入人工验收）。
 
 ### 3.5 未拖拽短按则补发原键（单击保留）
 

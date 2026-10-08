@@ -35,337 +35,139 @@ InitKeymap()
   fast := MouseKeymap("fast mouse", false, mouseTip, 110, 70, "T0.13", "T0.01", 1, "T0.2", "T0.03", slow)
   slow.Map("*space", slow.LButtonUp())
 
-  capsHook := InputHook("", "{CapsLock}{Esc}", "bb,ca,cc,cmd,dd,dm,ex,ga,gg,gj,kp,ld,lj,ly,mm,ms,mu,no,pd,rb,rex,se,sl,sp,ss,tm,vm,we,wf,wt")
-  capsHook.KeyOpt("{CapsLock}", "S")
-  capsHook.KeyOpt("{Backspace}", "N")
-  capsHook.OnChar := PostCharToCaspAbbr
-  capsHook.OnKeyDown := PostBackspaceToCaspAbbr
-  Run("bin\MyKeymap-CommandInput.exe")
-
-  semiHook := InputHook("", "{CapsLock}{Esc}{;}", ",,,.,/,dk,dq,fz,gg,gt,i love nia,jt,kg,rq,sj,sk,xf,xk,zh,zk")
-  semiHook.KeyOpt("{CapsLock}", "S")
-  semiHook.KeyOpt("{Backspace}", "N")
-  semiHook.OnChar := (ih, char) => semiHookAbbrWindow.Show(char, true)
-  semiHook.OnKeyDown := (ih, vk, sc) => semiHookAbbrWindow.Backspace()
-  semiHookAbbrWindow := InputTipWindow()
-
 
   ; 路径变量
   programs := "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"
 
   ; 窗口组
-  GroupAdd("MY_WINDOW_GROUP__1", "Stardew Valley ahk_class SDL_app")
-  GroupAdd("MY_WINDOW_GROUP__1", "ahk_exe Rune Factory 3 Special.exe")
   GroupAdd("MY_WINDOW_GROUP_1", "ahk_exe chrome.exe")
   GroupAdd("MY_WINDOW_GROUP_1", "ahk_exe msedge.exe")
   GroupAdd("MY_WINDOW_GROUP_1", "ahk_exe firefox.exe")
 
-  KeymapManager.GlobalKeymap.DisabledAt := "ahk_group MY_WINDOW_GROUP__1"
+  KeymapManager.GlobalKeymap.DisabledAt := ""
 
   ; CapsLock
   km5 := KeymapManager.NewKeymap("*CapsLock", "CapsLock", "", "")
   km := km5
-  km.Map("*c", _ => SoundControl())
-  km.Map("*z", _ => CopySelectedAsPlainText())
-  km.Map("*.", _ => MakeWindowDraggable())
-  km.Map("*a", _ => CenterAndResizeWindow(1370, 930))
-  km.Map("*b", _ => MinimizeWindow())
-  km.Map("*e", _ => Send("^!{tab}"), taskSwitch)
-  km.Map("*g", _ => ToggleWindowTopMost())
-  km.Map("*p", _ => GoToNextVirtualDesktop())
-  km.Map("*q", _ => MaximizeWindow())
-  km.Map("*r", _ => LoopRelatedWindows())
-  km.Map("*s", _ => CenterAndResizeWindow(1200, 800))
-  km.Map("*t", BindWindow())
-  km.Map("*v", _ => MoveWindowToNextMonitor())
-  km.Map("*w", _ => GoToLastWindow())
-  km.Map("*x", _ => SmartCloseWindow())
-  km.Map("*y", _ => GoToPreviousVirtualDesktop())
-  km.Map("*,", fast.LButtonDown()), slow.Map("*,", slow.LButtonDown())
-  km.Map("*/", _ => MoveMouseToCaret()), slow.Map("*/", _ => MoveMouseToCaret())
-  km.Map("*;", fast.ScrollWheelRight), slow.Map("*;", slow.ScrollWheelRight)
-  km.Map("*h", fast.ScrollWheelLeft), slow.Map("*h", slow.ScrollWheelLeft)
+  km.Map("*t", _ => ActivateOrRun("powershell.exe", "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "", "", true, true, false))
+  km.Map("*c", _ => CopySelectedAsPlainText())
+  km.Map("*v", _ => ShowActiveProcessInFolder())
+  km.Map("*b", _ => ToggleWindowTopMost())
+  km.Map("*space", _ => CloseWindowProcesses())
+  km.RemapKey("e", "]")
+  km.RemapKey("q", "[")
+  km.Map("*1", _ => (Send("^!o")))
+  km.Map("*3", _ => (Send("^!p")))
+  km.Map("singlePress", _ => (Send("{blind}{CapsLock}")))
+  km.Map("*g", _ => MyKeymapOpenSettings())
+
+  ; Alt模式
+  km6 := KeymapManager.NewKeymap("customHotkeys", "Alt模式", "", "")
+  km := km6
+  km.Map("*!*1", _ => ActivateOrRun("EverEdit ahk_class EverEdit", "M:\01_Program\ProgramMaye\EverEdit-4.5.0.4500-x64\EverEdit.exe", "", "", false, true, false))
+  km.Map("*!*2", _ => ActivateOrRun("XYplorer ahk_class ThunderRT6FormDC", "M:\01_Program\ProgramMaye\XYplorer-24.60.0100\XYplorer.exe", "", "", true, true, false))
+  km.Map("*!*3", _ => ActivateOrRun("ahk_exe Obsidian.exe", "M:\01_Program\ProgramMaye\obsidian\ObsidianPortable.exe", "", "M:\01_Program\ProgramMaye\obsidian", false, true, false))
+  km.Map("*!*4", _ => ActivateOrRun(" Google Chrome ahk_exe chrome.exe", "M:\01_Program\ProgramMaye\ChromeProtable\Chrome\App\chrome.exe", "", "", false, true, false))
+  km.Map("*!*q", _ => ActivateOrRun("ahk_exe project-graph.exe", "M:\01_Program\ProgramMaye\project-graph\project-graph.exe", "", "", false, true, false))
+  km.Map("*!*w", _ => ActivateOrRun("ahk_class MozillaWindowClass", "M:\01_Program\ProgramMaye\firefox\firefox-144.0.2-2025102712.en-US.win32-tete009-x64-sse3-cspgo\firefox.exe", "", "", false, true, false))
+
+  ; Tab 模式
+  km11 := KeymapManager.NewKeymap("Tab", "Tab 模式", "", "")
+  km := km11
+  km.Map("*f", _ => MakeWindowDraggable())
+  km.Map("*,", _ => MoveMouseToCaret()), slow.Map("*,", _ => MoveMouseToCaret())
+  km.Map("*2", fast.ScrollWheelUp), slow.Map("*2", slow.ScrollWheelUp)
   km.Map("*i", fast.MoveMouseUp, slow), slow.Map("*i", slow.MoveMouseUp)
   km.Map("*j", fast.MoveMouseLeft, slow), slow.Map("*j", slow.MoveMouseLeft)
   km.Map("*k", fast.MoveMouseDown, slow), slow.Map("*k", slow.MoveMouseDown)
   km.Map("*l", fast.MoveMouseRight, slow), slow.Map("*l", slow.MoveMouseRight)
-  km.Map("*m", fast.RButton()), slow.Map("*m", slow.RButton())
-  km.Map("*n", fast.LButton()), slow.Map("*n", slow.LButton())
-  km.Map("*o", fast.ScrollWheelDown), slow.Map("*o", slow.ScrollWheelDown)
-  km.Map("*u", fast.ScrollWheelUp), slow.Map("*u", slow.ScrollWheelUp)
-  km.Map("*0", _ => (Send("{home}+{end}{backspace}"), Send("{text}i love homura and hikari"), Sleep(1000), Send("{enter}yes{enter}")))
-  km.Map("*d", _ => CenterAndResizeWindow(1740, 1000))
-  km.Map("singlePress", _ => EnterCapslockAbbr(capsHook))
-
-  ; CapsLock + F
-  km6 := KeymapManager.AddSubKeymap(km5, "*f", "CapsLock + F", "")
-  km := km6
-  km.Map("*a", _ => ActivateOrRun("ahk_exe WindowsTerminal.exe", "shortcuts\终端预览.lnk"))
-  km.Map("*d", _ => ActivateOrRun("ahk_exe msedge.exe", "shortcuts\Microsoft Edge.lnk"))
-  km.Map("*e", _ => ActivateOrRun("ahk_class CabinetWClass ahk_exe Explorer.EXE", "shortcuts\File Explorer.lnk"))
-  km.Map("*h", _ => ActivateOrRun("- Microsoft Visual Studio", "shortcuts\Visual Studio 2019.lnk"))
-  km.Map("*i", _ => ActivateOrRun("ahk_exe Typora.exe", "shortcuts\Typora.lnk"))
-  km.Map("*j", _ => ActivateOrRun("ahk_exe idea64.exe", "shortcuts\IntelliJ IDEA Ultimate.lnk"))
-  km.Map("*k", _ => ActivateOrRun("ahk_class PotPlayer64", "shortcuts\PotPlayer 64 bit.lnk"))
-  km.Map("*l", _ => ActivateOrRun("ahk_exe EXCEL.EXE", "shortcuts\Excel.lnk"))
-  km.Map("*n", _ => ActivateOrRun("ahk_exe goland64.exe", "shortcuts\GoLand.lnk"))
-  km.Map("*o", _ => ActivateOrRun("ahk_exe ONENOTE.EXE", "shortcuts\OneNote.lnk"))
-  km.Map("*p", _ => ActivateOrRun("ahk_exe POWERPNT.EXE", "shortcuts\PowerPoint.lnk"))
-  km.Map("*q", _ => ActivateOrRun("ahk_class EVERYTHING", "shortcuts\Everything.lnk"))
-  km.Map("*r", _ => ActivateOrRun("ahk_exe FoxitReader.exe", "D:\install\Foxit Reader\FoxitReader.exe"))
-  km.Map("*s", _ => ActivateOrRun("ahk_exe Code.exe", "shortcuts\Visual Studio Code.lnk"))
-  km.Map("*w", _ => ActivateOrRun("ahk_exe chrome.exe", "shortcuts\Google Chrome.lnk"))
-  km.Map("singlePress", _ => (Send("{blind}{f}")))
-  km.Map("*m", _ => ProcessExistSendKeyOrRun("QQ.exe", "^!z", "shortcuts\QQ.lnk"))
-
-  ; CapsLock + Space
-  km7 := KeymapManager.AddSubKeymap(km5, "*Space", "CapsLock + Space", "")
-  km := km7
-  km.Map("*d", _ => ActivateOrRun("ahk_exe datagrip64.exe", "shortcuts\DataGrip.lnk"))
-  km.Map("singlePress", _ => (Send("{blind}{space}")))
-  km.Map("*w", _ => ProcessExistSendKeyOrRun("WeChat.exe", "^!w", "shortcuts\微信.lnk"))
-
-  ; J 模式
-  km8 := KeymapManager.NewKeymap("*j", "J 模式", "", "")
-  km := km8
-  km.Map("*i", _ => (Send("{blind}ji")))
-  km.Map("singlePress", _ => (Send("{blind}{j}")))
-  km.RemapKey(",", "delete")
-  km.RemapKey(".", "insert")
-  km.Map("*2", _ => (Send("^+{tab}")))
+  km.Map("*o", fast.RButton()), slow.Map("*o", slow.RButton())
+  km.Map("*u", fast.LButton()), slow.Map("*u", slow.LButton())
+  km.Map("*w", fast.ScrollWheelDown), slow.Map("*w", slow.ScrollWheelDown)
+  km.Map("*4", _ => (Send("!+4")))
+  km.Map("*a", _ => (Send("{Ctrl down}{WheelUp}{WheelUp}{WheelUp}{WheelUp}{WheelUp}{Ctrl up}")))
+  km.Map("*c", _ => (Send("!+c")))
+  km.Map("*r", _ => (Send("!+r")))
+  km.Map("*s", _ => (Send("!+d")))
+  km.Map("*x", _ => (Send("!+x")))
+  km.Map("*z", _ => (Send("{Ctrl down}{WheelDown}{WheelDown}{WheelDown}{WheelDown}{WheelDown}{Ctrl up}")))
+  km.Map("*space", _ => (Send("^+{space}")))
+  km.Map("singlePress", _ => (Send("{tab}")))
+  km.Map("*1", _ => (Send("^+{tab}")))
   km.Map("*3", _ => (Send("^{tab}")))
-  km.RemapKey("a", "home")
-  km.Map("*b", _ => (Send("^{backspace}")))
-  km.RemapKey("c", "backspace")
-  km.RemapKey("d", "down")
-  km.RemapKey("e", "up")
-  km.RemapKey("f", "right")
-  km.RemapKey("g", "end")
-  km.Map("*k", _ => HoldDownModifierKey("LShift"))
-  km.RemapKey("q", "appskey")
-  km.RemapKey("r", "tab")
-  km.RemapKey("s", "left")
-  km.Map("*t", _ => (Send("{home}+{end}{backspace}")))
-  km.Map("*v", _ => (Send("{blind}^{right}")))
-  km.Map("*w", _ => (Send("{blind}+{tab}")))
-  km.RemapKey("x", "esc")
-  km.Map("*z", _ => (Send("{blind}^{left}")))
-  km.Map("*space", _ => (Send("{blind}{enter}")))
-
-  ; 3 模式
-  km10 := KeymapManager.NewKeymap("*3", "3 模式", "", "")
-  km := km10
-  km.RemapKey("0", "F10")
-  km.RemapKey("2", "F2")
-  km.RemapKey("4", "F4")
-  km.RemapKey("5", "F5")
-  km.RemapKey("9", "F9")
-  km.RemapKey("b", "7")
-  km.RemapKey("e", "F11")
-  km.RemapKey("h", "0")
-  km.RemapKey("i", "5")
-  km.RemapKey("j", "1")
-  km.RemapKey("k", "2")
-  km.RemapKey("l", "3")
-  km.RemapKey("m", "9")
-  km.RemapKey("n", "8")
-  km.RemapKey("o", "6")
-  km.RemapKey("r", "F12")
-  km.RemapKey("t", "Volume_Up")
-  km.RemapKey("u", "4")
-  km.RemapKey("w", "Volume_Down")
-  km.RemapKey("space", "F1")
-  km.Map("singlePress", _ => (Send("{blind}{3}")))
-  km.Map("*/", km.ToggleLock)
-
-  ; 分号模式( ; )
-  km13 := KeymapManager.NewKeymap("*;", "分号模式( `; )", "", "")
-  km := km13
-  km.Map("*a", _ => (Send("{blind}*")))
-  km.Map("*b", _ => (Send("{blind}%")))
-  km.Map("*c", _ => (Send("{blind}.")))
-  km.Map("*d", _ => (Send("{blind}=")))
-  km.Map("*e", _ => (Send("{blind}{^}")))
-  km.Map("*f", _ => (Send("{blind}>")))
-  km.Map("*g", _ => (Send("{blind}{!}")))
-  km.Map("*h", _ => (Send("{blind}{+}")))
-  km.Map("*i", _ => (Send("{blind}:")))
-  km.Map("*j", _ => (Send("{blind};")))
-  km.Map("*k", _ => (Send("{blind}``")))
-  km.Map("*m", _ => (Send("{blind}-")))
-  km.Map("*n", _ => (Send("{blind}/")))
-  km.Map("*r", _ => (Send("{blind}&")))
-  km.Map("*s", _ => (Send("{blind}<")))
-  km.Map("*t", _ => (Send("{blind}~")))
-  km.Map("*u", _ => (Send("{blind}$")))
-  km.Map("*v", _ => (Send("{blind}|")))
-  km.Map("*w", _ => (Send("{blind}{#}")))
-  km.Map("*x", _ => (Send("{blind}_")))
-  km.Map("*y", _ => (Send("{blind}@")))
-  km.Map("*z", _ => (Send("{blind}\")))
-  km.Map("singlePress", _ => EnterSemicolonAbbr(semiHook, semiHookAbbrWindow))
-
-  ; 句号模式( . )
-  km14 := KeymapManager.NewKeymap("*.", "句号模式( . )", "", "")
-  km := km14
-  km.Map("singlePress", _ => (Send("{blind}{.}")))
-  km.Map("*,", _ => HoldDownModifierKey("LShift"))
-  km.Map("*2", _ => (Send("^+{tab}")))
-  km.Map("*3", _ => (Send("^{tab}")))
-  km.RemapKey("a", "home")
-  km.Map("*b", _ => (Send("^{backspace}")))
-  km.RemapKey("c", "backspace")
-  km.RemapKey("d", "down")
-  km.RemapKey("e", "up")
-  km.RemapKey("f", "right")
-  km.RemapKey("g", "end")
-  km.RemapKey("q", "appskey")
-  km.RemapKey("r", "tab")
-  km.RemapKey("s", "left")
-  km.Map("*v", _ => (Send("{blind}^{right}")))
-  km.Map("*w", _ => (Send("{blind}+{tab}")))
-  km.RemapKey("x", "esc")
-  km.Map("*z", _ => (Send("{blind}^{left}")))
-  km.Map("*space", _ => (Send("{blind}{enter}")))
-
-  ; 鼠标右键
-  km16 := KeymapManager.NewKeymap("RButton", "鼠标右键", "", "")
-  km := km16
-  km.Map("*XButton1", _ => GoToNextVirtualDesktop())
-  km.Map("*XButton2", _ => GoToPreviousVirtualDesktop())
-  km.Map("singlePress", fast.RButton()), slow.Map("singlePress", slow.RButton())
-  km.Map("*LButton", _ => (Send("^!{tab}")))
-  km.Map("*MButton", _ => (Send("#{tab}")))
-  km.RemapKey("c", "backspace")
   km.RemapKey("d", "delete")
-  km.RemapKey("x", "esc")
-  km.Map("*space", _ => (Send("{blind}{enter}")))
-  km.Map("*WheelUp", _ => (Send("^+{tab}")))
-  km.Map("*WheelDown", _ => (Send("^{tab}")))
+  km.Map("*e", _ => (Send("{blind}{enter}")))
+  km.RemapKey("q", "backspace")
+  km.Map("*t", _ => sendCurrentDateTime())
+
+  ; 波浪
+  km20 := KeymapManager.NewKeymap("*``", "波浪", "", "")
+  km := km20
+  km.Map("*1", _ => ActivateOrRun("ahk_exe lx-music-desktop.exe", "M:\01_Program\ProgramMaye\lx-music\LxMusic2.12.3\lx-music-desktop_Portable.exe", "", "M:\01_Program\ProgramMaye\lx-music\LxMusic2.12.3", false, true, false))
+  km.Map("*2", _ => ActivateOrRun("Mihomo Party ahk_exe Mihomo Party.exe", "M:\01_Program\ProgramMaye\mihomo-party-windows\mihomo-party-windows-1.8.2-x64-portable\Mihomo Party.exe", "", "", false, true, true))
+  km.Map("*3", _ => ActivateOrRun("任务管理器 ahk_exe Taskmgr.exe", "C:\Windows\System32\Taskmgr.exe", "", "", false, true, false))
+  km.Map("*4", _ => ActivateOrRun("CareUEyes ahk_class SOUIHOST", "M:\01_Program\ProgramMaye\CareUEyes\CareUEyesPortable.exe", "", "M:\01_Program\ProgramMaye\CareUEyes", false, true, false))
+  km.Map("*a", _ => ActivateOrRun("ahk_exe SndVol.exe", "C:\Windows\System32\SndVol.exe", "", "", false, true, false))
+  km.Map("*m", _ => ActivateOrRun("ahk_exe osk.exe", "shortcuts\On-Screen Keyboard.lnk", "", "", false, true, false))
+  km.Map("*q", _ => ActivateOrRun("ahk_exe SteelSeriesGGClient.exe", "C:\Program Files\SteelSeries\GG\SteelSeries GG Launcher.lnk", "", "", false, true, false))
+  km.Map("singlePress", _ => Send("^!{tab}"), taskSwitch)
+  km.Map("*'", _ => (Send("{blind}{``}")))
+
+  ; Win模式
+  km29 := KeymapManager.NewKeymap("LWin", "Win模式", "", "")
+  km := km29
+  km.Map("*1", _ => (Send("#^{Left}")))
+  km.Map("*2", _ => (Send("#{Tab}")))
+  km.Map("*3", _ => (Send("#^{Right}")))
+  km.Map("*d", _ => (Send("#d")))
+  km.Map("*e", _ => (Send("#e")))
+
+  ; F1
+  km31 := KeymapManager.NewKeymap("F1", "F1", "", "")
+  km := km31
+  km.Map("*/", _ => (Send("{F12}")))
+  km.Map("*3", _ => (Send("^!{F1}")))
+  km.Map("singlePress", _ => (Send("{blind}{F1}")))
+
+  ; F2
+  km32 := KeymapManager.NewKeymap("F2", "F2", "", "")
+  km := km32
+  km.Map("*1", _ => (Send("{F7}")))
+  km.Map("*3", _ => (Send("{F8}")))
+  km.Map("singlePress", _ => (Send("{blind}{F2}")))
+
+  ; F3
+  km33 := KeymapManager.NewKeymap("F3", "F3", "", "")
+  km := km33
+  km.RemapKey("1", "F9")
+  km.RemapKey("2", "F10")
+  km.RemapKey("3", "F11")
+  km.Map("singlePress", _ => (Send("{blind}{F3}")))
+
+  ; F4
+  km34 := KeymapManager.NewKeymap("F4", "F4", "", "")
+  km := km34
+  km.Map("singlePress", _ => (Send("{blind}{F4}")))
 
   ; Custom Hotkeys
   km1 := KeymapManager.NewKeymap("customHotkeys", "Custom Hotkeys", "", "")
   km := km1
-  km.RemapInHotIf("RAlt", "LControl")
-  km.Map("!'", _ => MyKeymapReload(), , , , "S")
-  km.Map("!+'", _ => MyKeymapToggleSuspend(), , , , "S")
+  km.Map("XButton1", _ => StartDragMoveWindowNoCursor()), km.Map("XButton1 up", _ => StopDragWindowNoCursor())
+  km.Map("XButton2", _ => StartDragResizeWindowNoCursor("axis")), km.Map("XButton2 up", _ => StopDragWindowNoCursor())
+  km.RemapInHotIf("PgUp", "End")
+  km.RemapInHotIf("RAlt", "RWin")
+  km.Map("!``", _ => MyKeymapToggleSuspend(), , , , "S")
   km.Map("!f17", _ => MyKeymapReload(), , , , "S")
-  km.Map("!CapsLock", _ => ToggleCapslock())
+  km.Map("^!``", _ => MyKeymapReload(), , , , "S")
 
 
   KeymapManager.GlobalKeymap.Enable()
 }
 
 ExecCapslockAbbr(command) {
-  ; 路径变量
-  programs := "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"
-
-  switch command {
-    case "bb":
-      ActivateOrRun("Bing 词典", "msedge.exe", "--app=https://www.bing.com/dict/search?q={selected}", "", false, false, false)
-    case "ca":
-      ActivateOrRun("计算器", "calc.exe")
-    case "cc":
-      ActivateOrRun("", "shortcuts\Visual Studio Code.lnk", "-n `"{selected}`"", "", false, false, false)
-    case "cmd":
-      ActivateOrRun("ahk_exe cmd.exe", "cmd.exe", "/k cd /d %userprofile%", "", false, false, false)
-    case "dd":
-      ActivateOrRun("", "shell:downloads")
-    case "dm":
-      ActivateOrRun("", A_WorkingDir)
-    case "ex":
-      MyKeymapExit()
-    case "ga":
-      ActivateOrRun("Game ahk_exe explorer.exe", A_Desktop "\Game")
-    case "gg":
-      ActivateOrRun("", "https://www.google.com/search?q={selected}")
-    case "gj":
-      SystemShutdown()
-    case "kp":
-      CloseWindowProcesses()
-    case "ld":
-      BrightnessControl()
-    case "lj":
-      ActivateOrRun("", "shell:RecycleBinFolder")
-    case "ly":
-      ActivateOrRun("", "ms-settings:bluetooth")
-    case "mm":
-      ActivateOrRun("MyKeymap2 - Visual Studio Code", "shortcuts\Visual Studio Code.lnk", "D:\MyFiles\MyKeymap2", "", false, false, false)
-    case "ms":
-      ActivateOrRun("my_site - Visual Studio Code", "shortcuts\Visual Studio Code.lnk", "D:\project\my_site", "", false, false, false)
-    case "mu":
-      MuteActiveApp()
-    case "no":
-      ActivateOrRun("记事本", "notepad.exe")
-    case "pd":
-      ShowActiveProcessInFolder()
-    case "rb":
-      SystemReboot()
-    case "rex":
-      SystemRestartExplorer()
-    case "se":
-      MyKeymapOpenSettings()
-    case "sl":
-      SystemSleep()
-    case "sp":
-      ActivateOrRun("Spotify", "https://open.spotify.com/")
-    case "ss":
-      ActivateOrRun("ahk_exe Spotify.exe", "shortcuts\Spotify.lnk")
-    case "tm":
-      Send("^+{esc}")
-    case "vm":
-      ActivateOrRun("", "ms-settings:apps-volume")
-    case "we":
-      ActivateOrRun("网易云音乐", "shortcuts\网易云音乐.lnk")
-    case "wf":
-      ActivateOrRun("", "ms-availablenetworks:")
-    case "wt":
-      ActivateOrRun("", "wt.exe", "-d `"{selected}`"", "", false, false, false)
-  }
 }
 
 ExecSemicolonAbbr(command) {
-  ; 路径变量
-  programs := "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"
-
-  switch command {
-    case ",":
-      Send("，")
-    case ".":
-      Send("。")
-    case "/":
-      Send("、")
-    case "dk":
-      Send("{text}{}"), Send("{left}")
-    case "dq":
-      ActivateOrRun("", "bin\AutoHotkey64.exe", "bin\AlignComment.ahk", "", false, false, true)
-    case "fz":
-      ActivateOrRun("连续复制后 ahk_class AutoHotkeyGUI", "bin\AutoHotkey64.exe", "bin\CollectText.ahk", "", false, false, false)
-    case "gg":
-      Send("{text}git add -A; git commit -a -m `"`"; git push origin (git branch --show-current);"), Send("{left 47}")
-    case "gt":
-      Send("🐶")
-    case "i love nia":
-      Send("{text}我爱尼娅! "), Send("{text}( 还 有 大 家 )")
-    case "jt":
-      Send("{text}➤ ")
-    case "kg":
-      InsertSpaceBetweenZHAndEn()
-    case "rq":
-      Send(Format("{}-{}-{}", A_YYYY, A_MM, A_DD))
-    case "sj":
-      Send(Format("{}年{}月{}日 {}:{}", A_YYYY, A_MM, A_DD, A_Hour, A_Min))
-    case "sk":
-      Send("「  」"), Send("{left 2}")
-    case "xf":
-      Send("();{left 2}")
-    case "xk":
-      Send("(){left}")
-    case "zh":
-      Send("{text} site:zhihu.com inurl:question")
-    case "zk":
-      Send("[]{left}")
-  }
 }
 
 InitTrayMenu() {
@@ -384,6 +186,7 @@ InitTrayMenu() {
 
 
 #HotIf
-RAlt::LControl
+PgUp::End
+RAlt::RWin
 
 #HotIf

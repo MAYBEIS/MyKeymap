@@ -33,6 +33,112 @@ global DRAG_DEADZONE := 4                       ; 死区(px), 超过才认为"�
 global DRAG_MIN_W := 120, DRAG_MIN_H := 80      ; 缩放的最小宽高
 ; 单击判定: 全程未超过死区, 且按住时长 < 该阈值(ms), 视为"单击"并补发原触发键
 global DRAG_CLICK_MS := 250
+; 调试日志开关(默认关闭). 开启时写 A_ScriptDir\drag_debug.log, 便于真实使用中取证.
+global DRAG_DEBUG := false
+; 测试开关(默认关闭, 不影响正常运行路径): 置 true 时 Poll 跳过"按键已松开则自停"的兜底,
+; 便于测试脚本用真实 SetCursorPos 驱动光标、无需真实按键即可复现/验证坐标路径.
+global DRAG_TEST_MODE := false
+
+/**
+ * 调试日志 (仅 DRAG_DEBUG=true 时写文件)
+ */
+DragLog(s) {
+  global DRAG_DEBUG
+  if !DRAG_DEBUG
+    return
+  try FileAppend(s "`r`n", A_ScriptDir . "\drag_debug.log", "UTF-8")
+}
+
+/**
+ * 清空调试日志 (每次 Start 调用)
+ */
+DragLogReset() {
+  global DRAG_DEBUG
+  if !DRAG_DEBUG
+    return
+  try FileDelete(A_ScriptDir . "\drag_debug.log")
+}
+
+/**
+ * 原生 Win32 读光标物理屏幕坐标 (唯一的光标读取入口)
+ *
+ * 为什么不用 MouseGetPos: AHK v2 的 CoordMode 是 **线程局部** 的, 且默认值为
+ * Client(相对活动窗口). 热键线程执行过 CoordMode("Mouse","Screen") 后,
+ * SetTimer 建立的 **定时器线程** 并不会继承该设置, 其 A_CoordModeMouse 仍是
+ * 默认 Client. 于是 Start(热键线程, Screen) 记录的基准, 与 Poll(定时器线程,
+ * Client) 读到的坐标分属两个坐标系 → 首帧位移暴走(跳变) + 参照系随窗口移动
+ * 产生反馈 → 疯狂抖动. 这正是本次的真实根因.
+ * GetCursorPos 恒返回物理屏幕坐标, 与线程/CoordMode/DPI 层无关, 从根上杜绝该类问题.
+ */
+DragRawCursor(&x, &y) {
+  pt := Buffer(8, 0)
+  DllCall("GetCursorPos", "ptr", pt)
+  x := NumGet(pt, 0, "int")
+  y := NumGet(pt, 4, "int")
+}
+
+/**
+ * 原生 Win32 读窗口物理屏幕矩形 (GetWindowRect, 唯一的窗口读取入口)
+ */
+DragRawRect(hwnd, &x, &y, &w, &h) {
+  rc := Buffer(16, 0)
+  DllCall("GetWindowRect", "ptr", hwnd, "ptr", rc)
+  x := NumGet(rc, 0, "int")
+  y := NumGet(rc, 4, "int")
+  w := NumGet(rc, 8, "int") - x
+  h := NumGet(rc, 12, "int") - y
+}
+
+/**
+ * 取光标处应操作的**顶层窗口** (物理屏幕坐标入参)
+ *
+ * WindowFromPoint 可能返回子控件(如记事本的 Edit), 若直接对其 SetWindowPos 只会移动控件本身.
+ * 故用 GetAncestor(GA_ROOT=2) 上溯到顶层窗口; 上溯失败再退回 WindowFromPoint 结果.
+ */
+DragWindowFromPoint(x, y) {
+  wfp := DllCall("WindowFromPoint", "int64", (y << 32) | (x & 0xFFFFFFFF), "ptr")
+  if !wfp
+    return 0
+  root := DllCall("GetAncestor", "ptr", wfp, "uint", 2, "ptr")   ; GA_ROOT
+  return root ? root : wfp
+}
+
+/**
+ * 原生 Win32 写窗口物理几何 (SetWindowPos, 唯一的窗口写入入口)
+ * flags 见 SWP_*; 调用方保证传 NOZORDER|NOACTIVATE, 避免置顶/激活副作用.
+ */
+DragSetWindowPos(hwnd, x, y, w, h, flags) {
+  DllCall("SetWindowPos", "ptr", hwnd, "ptr", 0, "int", x, "int", y, "int", w, "int", h, "uint", flags)
+}
+
+/**
+ * 当前线程 DPI 感知上下文句柄
+ * 18 == GetThreadDpiAwarenessContext(SetThreadDpiAwarenessContext(-3)) 的句柄值
+ * (PER_MONITOR_AWARE_V2)
+ */
+DragCtx() {
+  return DllCall("GetThreadDpiAwarenessContext", "ptr")
+}
+
+/**
+ * 把本线程 DPI 感知上下文统一为 PER_MONITOR_AWARE(-3), 返回切换前的句柄以便恢复.
+ * 在 Start 与每帧 Poll 都调用: 保证 GetCursorPos / GetWindowRect / SetWindowPos
+ * 在整个拖拽会话内始终处于同一 DPI 上下文, 杜绝混用导致的坐标系/比例不一致.
+ */
+DragHarmonizeDpi() {
+  raw := DragCtx()
+  if (raw != 18)
+    try DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
+  return raw
+}
+
+/**
+ * 恢复切换前的 DPI 上下文句柄 (与 DragHarmonizeDpi 配对)
+ */
+DragRestoreDpi(raw) {
+  if (raw != 18)
+    try DllCall("SetThreadDpiAwarenessContext", "ptr", raw, "ptr")
+}
 
 /**
  * 从热键名中提取用于 GetKeyState 的物理按键名
@@ -49,26 +155,32 @@ DragTriggerKey(hotkey) {
  * 按下时仅记录基准, 由 SetTimer 轮询鼠标位移后 WinMove.
  */
 StartDragMoveWindowNoCursor() {
-  global WindowDragState
+  global WindowDragState, DRAG_TEST_MODE
   if WindowDragState
     return
-  CoordMode("Mouse", "Screen")
-  ; DPI: 不在此处切换线程上下文. 主脚本启动时已统一为 PER_MONITOR_AWARE(-3),
-  ; 读光标(MouseGetPos)与读写窗口(WinGetPos/WinMove)全程共用同一上下文,
-  ; 避免会话内混用 -3/-1 造成坐标系/比例不一致(跳变、跟随偏移、读数暴走).
-  MouseGetPos(&mx0, &my0, &hwndUnderCursor)   ; 只读光标, 绝不 MouseMove
-  hwnd := hwndUnderCursor ? hwndUnderCursor : WinExist("A")
+  ; 全程使用原生 Win32 物理屏幕坐标: GetCursorPos / GetWindowRect / SetWindowPos.
+  ; 不再依赖 AHK 的 MouseGetPos/WinGetPos/WinMove, 因而与 CoordMode 线程局部性、
+  ; AHK DPI 层均无关, 从根上杜绝"Start/Poll 坐标系不一致"导致的跳变与抖动.
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx0, &my0)                    ; 只读光标, 绝不 SetCursorPos
+  hwnd := DragWindowFromPoint(mx0, my0)        ; 顶层窗口(自动上溯出子控件)
   if !hwnd
+    hwnd := DllCall("GetForegroundWindow", "ptr")
+  if !hwnd {
+    DragRestoreDpi(raw)
     return
+  }
   ; 最小化窗口无几何意义, 跳过
-  if (WinGetMinMax(hwnd) = -1)
+  if (WinGetMinMax(hwnd) = -1) {
+    DragRestoreDpi(raw)
     return
-  ; 最大化/全屏先还原, 否则 WinMove 无效
-  if (WinGetMinMax(hwnd) = 1)
+  }
+  ; 最大化/全屏先还原, 否则无法拖动
+  if (WinGetMinMax(hwnd) = 1) {
     WinRestore(hwnd)
-  ; 读写窗口几何与读光标统一使用 PER_MONITOR_AWARE(-3),
-  ; 避免同一拖拽会话内混用不同 DPI 上下文导致坐标系/比例不一致
-  WinGetPos(&x0, &y0, &w0, &h0, "ahk_id " hwnd)
+    Sleep 50
+  }
+  DragRawRect(hwnd, &x0, &y0, &w0, &h0)
   WindowDragState := {
     mode: "move",
     hwnd: hwnd,
@@ -77,8 +189,14 @@ StartDragMoveWindowNoCursor() {
     mx0: mx0, my0: my0,
     x0: x0, y0: y0, w0: w0, h0: h0,
     ox: mx0 - x0, oy: my0 - y0,   ; 抓取点相对窗口左上角的偏移, 移动时保持不变
+    lx: x0, ly: y0, lw: w0, lh: h0,   ; 上一帧实际写入的目标矩形(去抖: 相同则跳过写)
     moved: false
   }
+  DragLogReset()
+  DragLog("[Start move] ctx=" DragCtx() " A_ScreenDPI=" A_ScreenDPI
+    . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")"
+    . " | ox=" (mx0 - x0) " oy=" (my0 - y0))
+  DragRestoreDpi(raw)
   SetTimer(PollDragMoveWindowNoCursor, 10)
 }
 
@@ -86,12 +204,12 @@ StartDragMoveWindowNoCursor() {
  * 拖拽移动窗口 - 轮询 (每帧读取光标, 计算位移, 写窗口位置)
  */
 PollDragMoveWindowNoCursor() {
-  global WindowDragState, DRAG_DEADZONE
+  global WindowDragState, DRAG_DEADZONE, DRAG_TEST_MODE
   st := WindowDragState
   if !st
     return
-  ; 兜底: 触发键已松开则结束, 防止卡死
-  if !GetKeyState(st.key, "P") {
+  ; 兜底: 触发键已松开则结束, 防止卡死 (DRAG_TEST_MODE 时跳过, 便于测试)
+  if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
     StopDragWindowNoCursor()
     return
   }
@@ -99,15 +217,30 @@ PollDragMoveWindowNoCursor() {
     StopDragWindowNoCursor()
     return
   }
-  MouseGetPos(&mx, &my)   ; 只读光标 (与 StartDrag 同一 DPI 上下文, 不切换)
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx, &my)              ; 原生物理屏幕坐标, 与 Start 完全同源
   dx := mx - st.mx0
   dy := my - st.my0
   if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
     st.moved := true
-  if !st.moved   ; 死区之内不改变窗口, 保证"按下瞬间不跳变"
+  if !st.moved {   ; 死区之内不改变窗口, 保证"按下瞬间不跳变"
+    DragLog("[Poll move] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy " moved=false (no write)")
+    DragRestoreDpi(raw)
     return
+  }
   ; 新位置 = 光标 - 恒定抓取偏移, 尺寸不变 ⇒ 抓取点始终吸附光标, 无初始位移
-  WinMove(mx - st.ox, my - st.oy, , , "ahk_id " st.hwnd)
+  tgtx := mx - st.ox, tgty := my - st.oy
+  ; 去抖: 目标矩形与上一帧一致(无可视变化)则跳过写, 避免冗余 SetWindowPos 引起的抖动
+  if (tgtx != st.lx || tgty != st.ly) {
+    ; SWP_NOSIZE(0x1)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x15
+    DragSetWindowPos(st.hwnd, tgtx, tgty, 0, 0, 0x15)
+    st.lx := tgtx, st.ly := tgty
+  }
+  DragRestoreDpi(raw)
+  DragRawRect(st.hwnd, &ax, &ay, &aw, &ah)
+  DragLog("[Poll move] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy
+    . " | tgt=(" tgtx "," tgty ") | actualRect=(" ax "," ay "," aw "," ah ")"
+    . " | err=(" (ax - tgtx) "," (ay - tgty) ")")
 }
 
 /**
@@ -115,19 +248,28 @@ PollDragMoveWindowNoCursor() {
  * 按鼠标位移主轴自动选边/角: 水平为主改左右, 垂直为主改上下, 两者都大改角.
  */
 StartDragResizeWindowNoCursor(strategy := "axis") {
-  global WindowDragState
+  global WindowDragState, DRAG_TEST_MODE
   if WindowDragState
     return
-  CoordMode("Mouse", "Screen")
-  MouseGetPos(&mx0, &my0, &hwndUnderCursor)   ; 只读光标 (不切换 DPI 上下文, 见移动实现注释)
-  hwnd := hwndUnderCursor ? hwndUnderCursor : WinExist("A")
+  ; 同移动: 全程原生 Win32 物理屏幕坐标, 与 CoordMode 线程局部性/DPI 层无关.
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx0, &my0)                    ; 只读光标, 绝不 SetCursorPos
+  hwnd := DragWindowFromPoint(mx0, my0)        ; 顶层窗口(自动上溯出子控件)
   if !hwnd
+    hwnd := DllCall("GetForegroundWindow", "ptr")
+  if !hwnd {
+    DragRestoreDpi(raw)
     return
-  if (WinGetMinMax(hwnd) = -1)
+  }
+  if (WinGetMinMax(hwnd) = -1) {
+    DragRestoreDpi(raw)
     return
-  if (WinGetMinMax(hwnd) = 1)
+  }
+  if (WinGetMinMax(hwnd) = 1) {
     WinRestore(hwnd)
-  WinGetPos(&x0, &y0, &w0, &h0, "ahk_id " hwnd)
+    Sleep 50
+  }
+  DragRawRect(hwnd, &x0, &y0, &w0, &h0)
   WindowDragState := {
     mode: "resize",
     hwnd: hwnd,
@@ -136,8 +278,13 @@ StartDragResizeWindowNoCursor(strategy := "axis") {
     strategy: strategy,
     mx0: mx0, my0: my0,
     x0: x0, y0: y0, w0: w0, h0: h0,
+    lx: x0, ly: y0, lw: w0, lh: h0,   ; 上一帧实际写入的目标矩形(去抖)
     moved: false
   }
+  DragLogReset()
+  DragLog("[Start resize/" strategy "] ctx=" DragCtx() " A_ScreenDPI=" A_ScreenDPI
+    . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")")
+  DragRestoreDpi(raw)
   SetTimer(PollDragResizeWindowNoCursor, 10)
 }
 
@@ -145,11 +292,11 @@ StartDragResizeWindowNoCursor(strategy := "axis") {
  * 拖拽缩放窗口 - 轮询 (按位移主轴自动选边/角)
  */
 PollDragResizeWindowNoCursor() {
-  global WindowDragState, DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H
+  global WindowDragState, DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H, DRAG_TEST_MODE
   st := WindowDragState
   if !st
     return
-  if !GetKeyState(st.key, "P") {
+  if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
     StopDragWindowNoCursor()
     return
   }
@@ -157,13 +304,17 @@ PollDragResizeWindowNoCursor() {
     StopDragWindowNoCursor()
     return
   }
-  MouseGetPos(&mx, &my)   ; 只读光标 (与 StartDrag 同一 DPI 上下文, 不切换)
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx, &my)              ; 原生物理屏幕坐标, 与 Start 完全同源
   dx := mx - st.mx0
   dy := my - st.my0
   if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
     st.moved := true
-  if !st.moved   ; 满足"按下瞬间不改变尺寸"
+  if !st.moved {   ; 满足"按下瞬间不改变尺寸"
+    DragLog("[Poll resize] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy " moved=false (no write)")
+    DragRestoreDpi(raw)
     return
+  }
 
   ; 默认左上角固定, 右/下边跟随鼠标
   nx := st.x0, ny := st.y0, nw := st.w0, nh := st.h0
@@ -185,7 +336,17 @@ PollDragResizeWindowNoCursor() {
   }
   nw := Max(nw, DRAG_MIN_W)   ; 最小尺寸钳制
   nh := Max(nh, DRAG_MIN_H)
-  WinMove(nx, ny, nw, nh, "ahk_id " st.hwnd)
+  ; 去抖: 目标矩形与上一帧一致(无可视变化)则跳过写
+  if (nx != st.lx || ny != st.ly || nw != st.lw || nh != st.lh) {
+    ; SWP_NOMOVE(0x2)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x16
+    DragSetWindowPos(st.hwnd, nx, ny, nw, nh, 0x16)
+    st.lx := nx, st.ly := ny, st.lw := nw, st.lh := nh
+  }
+  DragRestoreDpi(raw)
+  DragRawRect(st.hwnd, &ax2, &ay2, &aw2, &ah2)
+  DragLog("[Poll resize] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy
+    . " | tgt=(" nx "," ny "," nw "," nh ") | actualRect=(" ax2 "," ay2 "," aw2 "," ah2 ")"
+    . " | err=(" (ax2 - nx) "," (ay2 - ny) "," (aw2 - nw) "," (ah2 - nh) ")")
 }
 
 /**
