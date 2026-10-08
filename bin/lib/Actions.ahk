@@ -19,6 +19,204 @@ MakeWindowDraggable() {
   SendInput("{Right}")
 }
 
+; ─────────────────────────────────────────────────────────────
+; 拖拽移动 / 拖拽缩放 (不抢光标)
+;
+; 核心要求: 全程绝不调用 MouseMove / SetCursorPos.
+; 只使用只读 API (MouseGetPos 读光标, WinGetPos 读窗口, GetKeyState 读按键),
+; 再通过 SetTimer 轮询 + WinMove 写窗口几何.
+; down 热键只记录基准, up 热键(或兜底 GetKeyState)结束, 因此按下瞬间不跳变.
+; ─────────────────────────────────────────────────────────────
+
+global WindowDragState := false
+global DRAG_DEADZONE := 4                       ; 死区(px), 超过才认为"开始拖动"
+global DRAG_MIN_W := 120, DRAG_MIN_H := 80      ; 缩放的最小宽高
+; 单击判定: 全程未超过死区, 且按住时长 < 该阈值(ms), 视为"单击"并补发原触发键
+global DRAG_CLICK_MS := 250
+
+/**
+ * 从热键名中提取用于 GetKeyState 的物理按键名
+ * 注意: up 热键形如 "*XButton1 up", ExtractWaitKey() 会保留 " up" 后缀
+ * (空格不在其 Trim 集合内), 必须去掉 " up" 才能被 GetKeyState 正确识别,
+ * 否则 GetKeyState("<key> up", "P") 恒为 false, 轮询会首帧自停.
+ */
+DragTriggerKey(hotkey) {
+  return RegExReplace(ExtractWaitKey(hotkey), "i)\s+up$", "")
+}
+
+/**
+ * 拖拽移动窗口 (不移动光标 / 不跳变)
+ * 按下时仅记录基准, 由 SetTimer 轮询鼠标位移后 WinMove.
+ */
+StartDragMoveWindowNoCursor() {
+  global WindowDragState
+  if WindowDragState
+    return
+  CoordMode("Mouse", "Screen")
+  ; DPI: 不在此处切换线程上下文. 主脚本启动时已统一为 PER_MONITOR_AWARE(-3),
+  ; 读光标(MouseGetPos)与读写窗口(WinGetPos/WinMove)全程共用同一上下文,
+  ; 避免会话内混用 -3/-1 造成坐标系/比例不一致(跳变、跟随偏移、读数暴走).
+  MouseGetPos(&mx0, &my0, &hwndUnderCursor)   ; 只读光标, 绝不 MouseMove
+  hwnd := hwndUnderCursor ? hwndUnderCursor : WinExist("A")
+  if !hwnd
+    return
+  ; 最小化窗口无几何意义, 跳过
+  if (WinGetMinMax(hwnd) = -1)
+    return
+  ; 最大化/全屏先还原, 否则 WinMove 无效
+  if (WinGetMinMax(hwnd) = 1)
+    WinRestore(hwnd)
+  ; 读写窗口几何与读光标统一使用 PER_MONITOR_AWARE(-3),
+  ; 避免同一拖拽会话内混用不同 DPI 上下文导致坐标系/比例不一致
+  WinGetPos(&x0, &y0, &w0, &h0, "ahk_id " hwnd)
+  WindowDragState := {
+    mode: "move",
+    hwnd: hwnd,
+    key: DragTriggerKey(A_ThisHotkey),
+    t0: A_TickCount,              ; 按下时刻, 用于"短按补发原键"判定
+    mx0: mx0, my0: my0,
+    x0: x0, y0: y0, w0: w0, h0: h0,
+    ox: mx0 - x0, oy: my0 - y0,   ; 抓取点相对窗口左上角的偏移, 移动时保持不变
+    moved: false
+  }
+  SetTimer(PollDragMoveWindowNoCursor, 10)
+}
+
+/**
+ * 拖拽移动窗口 - 轮询 (每帧读取光标, 计算位移, 写窗口位置)
+ */
+PollDragMoveWindowNoCursor() {
+  global WindowDragState, DRAG_DEADZONE
+  st := WindowDragState
+  if !st
+    return
+  ; 兜底: 触发键已松开则结束, 防止卡死
+  if !GetKeyState(st.key, "P") {
+    StopDragWindowNoCursor()
+    return
+  }
+  if !WinExist("ahk_id " st.hwnd) {   ; 窗口被关闭
+    StopDragWindowNoCursor()
+    return
+  }
+  MouseGetPos(&mx, &my)   ; 只读光标 (与 StartDrag 同一 DPI 上下文, 不切换)
+  dx := mx - st.mx0
+  dy := my - st.my0
+  if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
+    st.moved := true
+  if !st.moved   ; 死区之内不改变窗口, 保证"按下瞬间不跳变"
+    return
+  ; 新位置 = 光标 - 恒定抓取偏移, 尺寸不变 ⇒ 抓取点始终吸附光标, 无初始位移
+  WinMove(mx - st.ox, my - st.oy, , , "ahk_id " st.hwnd)
+}
+
+/**
+ * 拖拽缩放窗口 (不移动光标 / 按下瞬间不改变尺寸)
+ * 按鼠标位移主轴自动选边/角: 水平为主改左右, 垂直为主改上下, 两者都大改角.
+ */
+StartDragResizeWindowNoCursor(strategy := "axis") {
+  global WindowDragState
+  if WindowDragState
+    return
+  CoordMode("Mouse", "Screen")
+  MouseGetPos(&mx0, &my0, &hwndUnderCursor)   ; 只读光标 (不切换 DPI 上下文, 见移动实现注释)
+  hwnd := hwndUnderCursor ? hwndUnderCursor : WinExist("A")
+  if !hwnd
+    return
+  if (WinGetMinMax(hwnd) = -1)
+    return
+  if (WinGetMinMax(hwnd) = 1)
+    WinRestore(hwnd)
+  WinGetPos(&x0, &y0, &w0, &h0, "ahk_id " hwnd)
+  WindowDragState := {
+    mode: "resize",
+    hwnd: hwnd,
+    key: DragTriggerKey(A_ThisHotkey),
+    t0: A_TickCount,              ; 按下时刻, 用于"短按补发原键"判定
+    strategy: strategy,
+    mx0: mx0, my0: my0,
+    x0: x0, y0: y0, w0: w0, h0: h0,
+    moved: false
+  }
+  SetTimer(PollDragResizeWindowNoCursor, 10)
+}
+
+/**
+ * 拖拽缩放窗口 - 轮询 (按位移主轴自动选边/角)
+ */
+PollDragResizeWindowNoCursor() {
+  global WindowDragState, DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H
+  st := WindowDragState
+  if !st
+    return
+  if !GetKeyState(st.key, "P") {
+    StopDragWindowNoCursor()
+    return
+  }
+  if !WinExist("ahk_id " st.hwnd) {
+    StopDragWindowNoCursor()
+    return
+  }
+  MouseGetPos(&mx, &my)   ; 只读光标 (与 StartDrag 同一 DPI 上下文, 不切换)
+  dx := mx - st.mx0
+  dy := my - st.my0
+  if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
+    st.moved := true
+  if !st.moved   ; 满足"按下瞬间不改变尺寸"
+    return
+
+  ; 默认左上角固定, 右/下边跟随鼠标
+  nx := st.x0, ny := st.y0, nw := st.w0, nh := st.h0
+  if (st.strategy = "bottomright") {
+    ; 策略(b): 固定右下角, 宽高直接跟随位移
+    nw := st.w0 + dx
+    nh := st.h0 + dy
+  } else {
+    ; 策略(a): 按位移主轴自动选边/角
+    ax := Abs(dx), ay := Abs(dy)
+    if (ax > ay * 2) {
+      nw := st.w0 + dx                       ; 水平为主: 只改左右边
+    } else if (ay > ax * 2) {
+      nh := st.h0 + dy                       ; 垂直为主: 只改上下边
+    } else {
+      nw := st.w0 + dx                       ; 两者都大: 同时改角
+      nh := st.h0 + dy
+    }
+  }
+  nw := Max(nw, DRAG_MIN_W)   ; 最小尺寸钳制
+  nh := Max(nh, DRAG_MIN_H)
+  WinMove(nx, ny, nw, nh, "ahk_id " st.hwnd)
+}
+
+/**
+ * 结束拖拽 (移动/缩放共用) - 停定时器并清理, 保证按键绝不卡住
+ *
+ * "未拖拽且短按则补发原键":
+ *   若全程从未超过死区(!moved) 且 按住时长 < DRAG_CLICK_MS, 说明这是一次
+ *   单击 (而非拖动), 此时 down/up 热键已把原键(如鼠标 XButton1/2 的
+ *   后退/前进)整段吞掉, 故补发一次原始点击, 保住其原有功能。
+ *   一旦超过死区发生过拖动则不补发。
+ *   补发仅针对能被 AHK Send 表达的键名, 用 try 包裹, 失败(键名无法重发)
+ *   也不影响拖拽主功能。
+ */
+StopDragWindowNoCursor() {
+  global WindowDragState, DRAG_CLICK_MS
+  SetTimer(PollDragMoveWindowNoCursor, 0)
+  SetTimer(PollDragResizeWindowNoCursor, 0)
+  st := WindowDragState
+  WindowDragState := false
+  if !st
+    return
+  if (st.moved)
+    return                                  ; 发生过拖动 ⇒ 不补发
+  if (A_TickCount - st.t0 >= DRAG_CLICK_MS)
+    return                                  ; 长按 ⇒ 不算单击
+  key := st.key
+  if !key
+    return
+  try Send("{blind}{" key "}")              ; 补发原始单击 (鼠标键名 XButton1/2 同样适用)
+}
+
 /**
  * 启动程序或切换到程序
  * @param {string} winTitle AHK中的WinTitle

@@ -16,3 +16,5 @@ config-server/settings.exe
 shortcuts/
 lanzou_cookie.txt
 CommandInputSkin.txt
+tools/loopMIDI.exe
+bin/tmp_err.txt

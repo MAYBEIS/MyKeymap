@@ -21,6 +21,8 @@ export const languageMap = {
   14: { zh: "切换窗口置顶状态", en: "Always on top", },
   15: { zh: "让窗口随鼠标拖动", en: "Drag window", },
   16: { zh: "绑定当前窗口 (长按绑定,短按激活)", en: "Bind window by long press", },
+  1701: { zh: "拖拽移动窗口（不移动光标）", en: "Drag to move window (cursor-free)", },
+  1702: { zh: "拖拽缩放窗口（不移动光标）", en: "Drag to resize window (cursor-free)", },
 
   // system
   17: { zh: "锁屏", en: "Lock the screen", },
