@@ -212,7 +212,11 @@ func (c *Config) handleKeyRemapping(custom Keymap) {
 			s.WriteString("\n")
 			lastGroup = a.WindowGroupID
 		}
-		s.WriteString(fmt.Sprintf("%s::%s\n", strings.TrimLeft(a.Hotkey, "*"), a.RemapToKey))
+		// 这里直出原生指令 "a::b", "=" 是 MyKeymap 的保守式标识, AHK 不认识,
+		// 必须剥离, 否则会生成非法行 "=XButton1::b" 导致 AHK 加载报错。
+		// 重映射只发送替换键, 不存在"放行原键"路径, 本就等价于保守式。
+		hk := strings.TrimLeft(strings.ReplaceAll(a.Hotkey, "=", ""), "*")
+		s.WriteString(fmt.Sprintf("%s::%s\n", hk, a.RemapToKey))
 	}
 	s.WriteString("\n#HotIf")
 	c.KeyMapping = s.String()

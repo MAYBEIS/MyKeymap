@@ -18,3 +18,7 @@ lanzou_cookie.txt
 CommandInputSkin.txt
 tools/loopMIDI.exe
 bin/tmp_err.txt
+tools/ahk_err.txt
+; go build 失败时的临时备份(被进程/杀软锁定时无法删除)
+bin/settings.exe~
+tools/verify_result.txt

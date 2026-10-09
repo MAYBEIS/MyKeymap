@@ -103,6 +103,9 @@ const getActionWindowGroupId = (action: Array<Action>) => {
               <p>!space = Alt + Space</p>
 
               <br>
+              <p>{{ translate('label:407') }}</p>
+
+              <br>
               <p>更多特殊按键参考: <a target="_blank"
                                   href="https://wyagd001.github.io/v2/docs/KeyList.htm#keyboard"
                                   style="color: green; text-decoration: none">reference</a></p>

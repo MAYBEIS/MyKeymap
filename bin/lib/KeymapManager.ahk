@@ -2,6 +2,14 @@
   static GlobalKeymap := Keymap("GlobalKeymap")
   static Stack := Array(this.GlobalKeymap)
   static L := { toLock: false, locked: false, show: false, toggle: false }
+  ; "=" 前缀(保守式/完全拦截)登记表, key = ExtractWaitKey 后的键名
+  ; 语义: 带 "=" 的映射在任何情况下都不补发/放行原键(未拖动/长按/短按都不放行)
+  static Conservative := Map()
+
+  ; 统一判断入口: 热键串(keymap.Hotkey 或 _Hotkey.rawName)是否带 "=" 保守标识
+  static IsConservative(hotkey) {
+    return hotkey != "" && InStr(hotkey, "=") ? true : false
+  }
 
   static NewKeymap(globalHotkey, name, delay, disableAt) {
     if globalHotkey == "customHotkeys" {
@@ -43,7 +51,10 @@
         }
         if !GetKeyState(keymap.WaitKey, "P") || (!ih.InProgress && ih.EndReason != "Timeout") {
           ih.Stop()
-          Send("{blind}{" keymap.WaitKey "}{" ih.EndKey "}")
+          ; 保守式(keymap.Hotkey 带 "=")不放行原键, 只回收按键状态, 模拟"什么都没按"
+          if !KeymapManager.IsConservative(keymap.Hotkey) {
+            Send("{blind}{" keymap.WaitKey "}{" ih.EndKey "}")
+          }
           KeyWait(keymap.WaitKey)
           ; Suspend
           return true
@@ -263,7 +274,17 @@ class Keymap {
       wrapper := hotkeyName
     }
 
-    hk := Keymap._Hotkey(hotkeyName, wrapper, options, winTitle, conditionType)
+    ; 识别用户显式书写的 "=" 前缀(保守式/完全拦截)
+    ; 必须把 "=" 从热键串中剥离后再交给 Hotkey(), 因为 AHK 不认识 "=", 否则注册失败.
+    ; 用"原串是否含 ="判定 conservative, 支持 "=XButton1" / "=*XButton1" / "=^!c" 等任意组合.
+    conservative := InStr(hotkeyName, "=") ? true : false
+    rawName := StrReplace(hotkeyName, "=")
+    if conservative {
+      KeymapManager.Conservative[ExtractWaitKey(rawName)] := true
+    }
+
+    hk := Keymap._Hotkey(rawName, wrapper, options, winTitle, conditionType)
+    hk.conservative := conservative
     if !this.M.Has(hk.name) {
       this.M[hk.name] := Array()
     }
@@ -308,6 +329,7 @@ class Keymap {
     ; 使用鼠标按钮作为触发键, 尝试兼容其他鼠标手势软件
     mouseMoved := false
     thisHotkey := A_ThisHotkey
+    conservative := KeymapManager.IsConservative(this.Hotkey)
     CoordMode("Mouse", "Screen")
 
     MouseGetPos(&x1, &y1)
@@ -326,10 +348,13 @@ class Keymap {
     if (thisHotkey = A_ThisHotkey && (A_TickCount - startTick < 450)) {
       if !mouseMoved {
         this.SinglePressAction.Run()
-      } else {
+      } else if !conservative {
+        ; 仅非保守式走"兼容鼠标手势"的放行(补发原键); 保守式不放行
         Send("{blind}{" this.WaitKey " Down}")
         KeyWait(this.WaitKey)
         Send("{blind}{" this.WaitKey " Up}")
+      } else {
+        KeyWait(this.WaitKey)
       }
     }
   }
@@ -663,11 +688,13 @@ class TaskSwitchKeymap extends Keymap {
 NoOperation(thisHotkey) {
 }
 
+; "=" 为保守式(完全拦截)标识符, 需从键名中一并剥离; 调用前会先去掉 "=",
+; 这里再保留一份以兼容直接传入含 "=" 热键串(如 keymap.Hotkey)的情况.
 ExtractWaitKey(hotkey) {
-  waitKey := Trim(hotkey, " #!^+<>*~$")
+  waitKey := Trim(hotkey, " #!^+<>*~$=")
   if InStr(waitKey, "&") {
     sp := StrSplit(waitKey, "&")
-    waitKey := Trim(sp[2])
+    waitKey := Trim(sp[2], " #!^+<>*~$=")
   }
   return waitKey
 }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 移动鼠标到活动窗口中心
  */
 MouseToActiveWindowCenter() {
@@ -26,13 +26,15 @@ MakeWindowDraggable() {
 ; 只使用只读 API (MouseGetPos 读光标, WinGetPos 读窗口, GetKeyState 读按键),
 ; 再通过 SetTimer 轮询 + WinMove 写窗口几何.
 ; down 热键只记录基准, up 热键(或兜底 GetKeyState)结束, 因此按下瞬间不跳变.
+;
+; 拦截策略: 拖拽默认"完全拦截", 任何情况下都不补发/放行原触发键 ——
+;   未拖动(单击/长按未动)不放行原键(视作什么都没按), 拖动时由拖拽接管.
+;   因此这两个功能天然等价于 "=" 保守式, 无需在热键串上额外书写 "=".
 ; ─────────────────────────────────────────────────────────────
 
 global WindowDragState := false
 global DRAG_DEADZONE := 4                       ; 死区(px), 超过才认为"开始拖动"
 global DRAG_MIN_W := 120, DRAG_MIN_H := 80      ; 缩放的最小宽高
-; 单击判定: 全程未超过死区, 且按住时长 < 该阈值(ms), 视为"单击"并补发原触发键
-global DRAG_CLICK_MS := 250
 ; 调试日志开关(默认关闭). 开启时写 A_ScriptDir\drag_debug.log, 便于真实使用中取证.
 global DRAG_DEBUG := false
 ; 测试开关(默认关闭, 不影响正常运行路径): 置 true 时 Poll 跳过"按键已松开则自停"的兜底,
@@ -185,7 +187,6 @@ StartDragMoveWindowNoCursor() {
     mode: "move",
     hwnd: hwnd,
     key: DragTriggerKey(A_ThisHotkey),
-    t0: A_TickCount,              ; 按下时刻, 用于"短按补发原键"判定
     mx0: mx0, my0: my0,
     x0: x0, y0: y0, w0: w0, h0: h0,
     ox: mx0 - x0, oy: my0 - y0,   ; 抓取点相对窗口左上角的偏移, 移动时保持不变
@@ -274,7 +275,6 @@ StartDragResizeWindowNoCursor(strategy := "axis") {
     mode: "resize",
     hwnd: hwnd,
     key: DragTriggerKey(A_ThisHotkey),
-    t0: A_TickCount,              ; 按下时刻, 用于"短按补发原键"判定
     strategy: strategy,
     mx0: mx0, my0: my0,
     x0: x0, y0: y0, w0: w0, h0: h0,
@@ -350,32 +350,17 @@ PollDragResizeWindowNoCursor() {
 }
 
 /**
- * 结束拖拽 (移动/缩放共用) - 停定时器并清理, 保证按键绝不卡住
+ * 结束拖拽 (移动/缩放共用) - 停定时器并清理
  *
- * "未拖拽且短按则补发原键":
- *   若全程从未超过死区(!moved) 且 按住时长 < DRAG_CLICK_MS, 说明这是一次
- *   单击 (而非拖动), 此时 down/up 热键已把原键(如鼠标 XButton1/2 的
- *   后退/前进)整段吞掉, 故补发一次原始点击, 保住其原有功能。
- *   一旦超过死区发生过拖动则不补发。
- *   补发仅针对能被 AHK Send 表达的键名, 用 try 包裹, 失败(键名无法重发)
- *   也不影响拖拽主功能。
+ * 拦截策略: 完全拦截, 不补发原键.
+ *   无论是否拖动、无论按住时长, 都绝不放行原触发键(未拖动 = 什么都没按).
+ *   本函数只负责: 停掉轮询定时器 + 清空拖拽状态, 保证按键不卡住.
  */
 StopDragWindowNoCursor() {
-  global WindowDragState, DRAG_CLICK_MS
+  global WindowDragState
   SetTimer(PollDragMoveWindowNoCursor, 0)
   SetTimer(PollDragResizeWindowNoCursor, 0)
-  st := WindowDragState
   WindowDragState := false
-  if !st
-    return
-  if (st.moved)
-    return                                  ; 发生过拖动 ⇒ 不补发
-  if (A_TickCount - st.t0 >= DRAG_CLICK_MS)
-    return                                  ; 长按 ⇒ 不算单击
-  key := st.key
-  if !key
-    return
-  try Send("{blind}{" key "}")              ; 补发原始单击 (鼠标键名 XButton1/2 同样适用)
 }
 
 /**

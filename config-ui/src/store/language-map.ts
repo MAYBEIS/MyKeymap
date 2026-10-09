@@ -130,6 +130,7 @@ export const languageMap = {
   404: { zh: "热键", en: "Hotkey" },
   405: { zh: "新增一个", en: "Add" },
   406: { zh: "输入ab按回车添加/切换到ab, del ab删除ab, rn cd重命名当前为cd", en: "Input 'ab' and Enter to add a new item. Delete => del ab. Rename => rn cd."},
+  407: { zh: "=XButton1 = 完全拦截（不漏键）：任何情况下都不放行原键，未拖动视作什么都没按", en: "=XButton1 = fully intercept (never leak the key): the physical key is always swallowed, e.g. no drag = nothing pressed" },
 
   // Settings
   501: { zh: "名称", en: "Name" },
