@@ -8,9 +8,9 @@
 >
 > | 项 | 最终实现 |
 > |---|---|
-> | ValueID 17 | 拖拽移动窗口 → `StartDragMoveWindowNoCursor()` / up → `StopDragWindowNoCursor()` |
-> | ValueID 18 | 拖拽缩放窗口 → `StartDragResizeWindowNoCursor("axis")` / up → `StopDragWindowNoCursor()` |
-> | AHK 函数 | `StartDragMoveWindowNoCursor` / `PollDragMoveWindowNoCursor`、`StartDragResizeWindowNoCursor` / `PollDragResizeWindowNoCursor`、`StopDragWindowNoCursor`，位于 [`Actions.ahk`](bin/lib/Actions.ahk:22) |
+> | ValueID 17 | 拖拽移动窗口 → `StartDragMoveWindow()` / up → `StopDragWindow()` |
+> | ValueID 18 | 拖拽缩放窗口 → `StartDragResizeWindow("axis")` / up → `StopDragWindow()` |
+> | AHK 函数 | `StartDragMoveWindow` / `PollDragMoveWindow`、`StartDragResizeWindow` / `PollDragResizeWindow`、`StopDragWindow`，位于 [`Actions.ahk`](bin/lib/Actions.ahk:22) |
 > | 全局状态 | `WindowDragState`、`DRAG_DEADZONE=4`、`DRAG_MIN_W=120`、`DRAG_MIN_H=80` |
 > | 拦截策略 | 完全拦截, 任何情况都不补发/放行原触发键(未拖动 = 什么都没按); 见 §3.5 |
 > | 缩放策略 | 按位移主轴自动选边/角（`|dx|>2|dy|` 改左右、`|dy|>2|dx|` 改上下、否则改角） |
@@ -146,7 +146,7 @@ MakeWindowDraggable() {
 1. `PostMessage(0x0112=WM_SYSCOMMAND, 0xF010=SC_MOVE)` 触发的是 **Windows 自带的模态“移动窗口”循环**（与 Alt+Space→M 等价）。
 2. 该循环由 `DefWindowProc` 驱动，它**以当前光标位置为锚点重定位窗口**，习惯上把光标“吸”到窗口顶端/标题栏对应点，因此会产生 **光标被强制移动（跳变到窗口顶部）** 的现象。
 3. `SendInput("{Right}")` 只是给系统一个方向键输入，让移动循环开始跟随，并可能产生一次瞬移。
-4. 整个过程依赖系统循环，**无法感知/保持“抓取点相对窗口的偏移”**，也**无法做到不移动光标**。
+4. 整个过程依赖系统循环，**无法感知/保持“抓取点相对窗口的偏移”**，光标会被系统强制移动。
 
 > 结论：这条路径本质上是“借用系统 SC_MOVE 循环”，与用户要的“抓住窗口上某点、光标不动”背道而驰，**必须用新的自实现方案**。
 
@@ -249,7 +249,7 @@ ownd->bottom = ownd->top  + state.origin.height;
   ```
   （[hooks.c:3990-3995](M:/08_Project/VSCODE/AltSnap/hooks.c:3990)）
 
-### 2.4 鼠标驱动（不抢光标）
+### 2.4 鼠标驱动
 
 - `WM_MOUSEMOVE` 中若位置未变直接返回；否则更新 `state.prevpt` 并重算窗口（[hooks.c:5438-5448](M:/08_Project/VSCODE/AltSnap/hooks.c:5438)）。
 - 整个拖动过程由**低层鼠标钩子读取光标位置** + 窗口位置写回驱动，**不修改光标坐标**。可选 `HideCursor()`（[hooks.c:5029](M:/08_Project/VSCODE/AltSnap/hooks.c:5029)）。
@@ -263,7 +263,7 @@ ownd->bottom = ownd->top  + state.origin.height;
 | 移动 | `新位置 = 光标 − 抓取偏移` | 同款 |
 | 缩放 | 记录边/角 + 该边偏移，`新尺寸 = 光标 − 锚点 + offset` | 采用简化版（位移驱动） |
 | 防跳变 | 按下只记录，位移在 MOVE 事件才生效 | 同款（死区 + 基准位移） |
-| 不抢光标 | 只读 `CursorPos`，从不 `SetCursorPos` | 同款（只用 `MouseGetPos`） |
+| 光标处理 | 只读 `CursorPos`，从不 `SetCursorPos` | 同款 |
 | 最小尺寸 | `CLAMPW/CLAMPH` | AHK 侧常量钳制 |
 
 ---
@@ -388,7 +388,7 @@ down/up 成对注册后，触发键的**整段按下-抬起**都由本功能接�
 | 未拖动（单击 / 长按未动） | **同样不放行**原键，视作“什么都没按” |
 
 - **理由**：绑定到鼠标侧键（`XButton1`/`XButton2`，原本是“后退/前进”）时，若在未拖动时放行原键，会在高频操作中偶发触发“后退/前进”（即用户反馈的“漏键”）。完全拦截可彻底避免。
-- **实现**：[`StopDragWindowNoCursor()`](bin/lib/Actions.ahk:359) 仅「停定时器 + 清理状态」，**不含任何 `Send` 补发**。
+- **实现**：[`StopDragWindow()`](bin/lib/Actions.ahk:359) 仅「停定时器 + 清理状态」，**不含任何 `Send` 补发**。
 - **键名来源**：`st.key` 由 [`DragTriggerKey()`](bin/lib/Actions.ahk:41) 从 `A_ThisHotkey` 提取（去掉 `*`、` up` 等），仅用于轮询判定触发键是否仍按住。
 
 **最小尺寸**：定义常量 `MIN_W := 200, MIN_H := 150`（可调）；如需精确对齐系统最小值，可后续用 `GetMinMaxInfo`/`WM_GETMINMAXINFO`（AltSnap 用 `CLAMPW/CLAMPH`，[hooks.c:5097](M:/08_Project/VSCODE/AltSnap/hooks.c:5097)）。
@@ -403,18 +403,18 @@ down/up 成对注册后，触发键的**整段按下-抬起**都由本功能接�
 
 | 新 ValueID | 语义 | 建议 AHK 起始调用 |
 |---|---|---|
-| **17** | 拖拽移动窗口 | `StartDragMoveWindowNoCursor()` |
-| **18** | 拖拽缩放窗口 | `StartDragResizeWindowNoCursor("axis")` |
+| **17** | 拖拽移动窗口 | `StartDragMoveWindow()` |
+| **18** | 拖拽缩放窗口 | `StartDragResizeWindow("axis")` |
 
 生成形态（**down/up 成对**，沿用 [`KeymapManager.ahk:467-468`](bin/lib/KeymapManager.ahk:467) 范式；`ctx` 复用 [`GetHotkeyContext()`](config-server/internal/script/config.go:148) 以保留窗口过滤）：
 
 ```go
 // 伪代码
 if a.ValueID == 17 || a.ValueID == 18 {
-    start, stop := "StartDragMoveWindowNoCursor()", "StopDragMoveWindowNoCursor()"
+    start, stop := "StartDragMoveWindow()", "StopDragWindow()"
     if a.ValueID == 18 {
-        start = `StartDragResizeWindowNoCursor("axis")`
-        stop  = "StopDragResizeWindowNoCursor()"
+        start = `StartDragResizeWindow("axis")`
+        stop  = "StopDragWindow()"
     }
     ctx := Cfg.GetHotkeyContext(a)
     return fmt.Sprintf(
@@ -431,12 +431,12 @@ if a.ValueID == 17 || a.ValueID == 18 {
 
 | 函数 | 作用 |
 |---|---|
-| `StartDragMoveWindowNoCursor()` | 按下：记录基准，`SetTimer(PollDragMoveWindowNoCursor, 10)` |
-| `PollDragMoveWindowNoCursor()` | 轮询：读光标 + `WinMove` |
-| `StopDragMoveWindowNoCursor()` | 松开：停定时器、清理、未移动则补发原键 |
-| `StartDragResizeWindowNoCursor(strategy)` | 同移动，但记录 rect 且策略驱动 |
-| `PollDragResizeWindowNoCursor()` | 轮询：按策略算 w/h、最小尺寸钳制、`WinMove` |
-| `StopDragResizeWindowNoCursor()` | 松开：停定时器、清理、未移动则补发原键 |
+| `StartDragMoveWindow()` | 按下：记录基准，`SetTimer(PollDragMoveWindow, 10)` |
+| `PollDragMoveWindow()` | 轮询：读光标 + `WinMove` |
+| `StopDragWindow()` | 松开：停定时器、清理状态（移动/缩放共用） |
+| `StartDragResizeWindow(strategy)` | 同移动，但记录 rect 且策略驱动 |
+| `PollDragResizeWindow()` | 轮询：按策略算 w/h、最小尺寸钳制、`WinMove` |
+| `StopDragWindow()` | 同上（移动/缩放共用同一 Stop） |
 
 依赖的**既有工具函数/范式**：`ExtractWaitKey()`（[KeymapManager.ahk:666](bin/lib/KeymapManager.ahk:666)）、`WindowMaxOrMin()`（[Functions.ahk:502](bin/lib/Functions.ahk:502)）、`WinRestore`、`Tip()`（[Utils.ahk:7](bin/lib/Utils.ahk:7)）、`SetTimer`。
 
@@ -445,7 +445,7 @@ if a.ValueID == 17 || a.ValueID == 18 {
 ```ahk
 WindowDragState := false
 
-StartDragMoveWindowNoCursor() {
+StartDragMoveWindow() {
   global WindowDragState
   if WindowDragState
     return
@@ -462,10 +462,10 @@ StartDragMoveWindowNoCursor() {
     hwnd: hwnd, mx0: mx0, my0: my0,
     ox: mx0 - x0, oy: my0 - y0, moved: false
   }
-  SetTimer(PollDragMoveWindowNoCursor, 10)
+  SetTimer(PollDragMoveWindow, 10)
 }
 
-PollDragMoveWindowNoCursor() {
+PollDragMoveWindow() {
   global WindowDragState
   st := WindowDragState
   if !st
@@ -474,7 +474,7 @@ PollDragMoveWindowNoCursor() {
   if !st.moved && (Abs(mx - st.mx0) > 3 || Abs(my - st.my0) > 3)
     st.moved := true
   if st.moved && WinExist("ahk_id " st.hwnd)
-    WinMove(mx - st.ox, my - st.oy, , , "ahk_id " st.hwnd)   ; 不移动光标
+    WinMove(mx - st.ox, my - st.oy, , , "ahk_id " st.hwnd)
 }
 ```
 

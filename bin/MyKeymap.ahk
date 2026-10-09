@@ -152,8 +152,8 @@ InitKeymap()
   ; Custom Hotkeys
   km1 := KeymapManager.NewKeymap("customHotkeys", "Custom Hotkeys", "", "")
   km := km1
-  km.Map("XButton1", _ => StartDragMoveWindowNoCursor()), km.Map("XButton1 up", _ => StopDragWindowNoCursor())
-  km.Map("XButton2", _ => StartDragResizeWindowNoCursor("axis")), km.Map("XButton2 up", _ => StopDragWindowNoCursor())
+  km.Map("XButton1", _ => StartDragMoveWindow()), km.Map("XButton1 up", _ => StopDragWindow())
+  km.Map("XButton2", _ => StartDragResizeWindow("axis")), km.Map("XButton2 up", _ => StopDragWindow())
   km.RemapInHotIf("PgUp", "End")
   km.RemapInHotIf("RAlt", "RWin")
   km.Map("!``", _ => MyKeymapToggleSuspend(), , , , "S")

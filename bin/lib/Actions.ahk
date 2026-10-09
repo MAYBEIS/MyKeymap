@@ -20,12 +20,13 @@ MakeWindowDraggable() {
 }
 
 ; ─────────────────────────────────────────────────────────────
-; 拖拽移动 / 拖拽缩放 (不抢光标)
+; 拖拽移动窗口 / 拖拽缩放窗口
 ;
-; 核心要求: 全程绝不调用 MouseMove / SetCursorPos.
-; 只使用只读 API (MouseGetPos 读光标, WinGetPos 读窗口, GetKeyState 读按键),
-; 再通过 SetTimer 轮询 + WinMove 写窗口几何.
-; down 热键只记录基准, up 热键(或兜底 GetKeyState)结束, 因此按下瞬间不跳变.
+; 按下时只记录基准(窗口几何 + 光标位置 + 抓取偏移), 由 SetTimer 轮询鼠标位移,
+; 位移超过死区后才写窗口几何; 松开触发键立即停止.
+; 全程使用原生 Win32 物理屏幕坐标(GetCursorPos/GetWindowRect/SetWindowPos),
+; 只读光标、写窗口, 绝不调用 MouseMove/SetCursorPos.
+; down 热键只记录基准, up 热键(或兜底 GetKeyState)结束.
 ;
 ; 拦截策略: 完全拦截, 任何情况下都不补发/放行原触发键 ——
 ;   未拖动(单击/长按未动)不放行原键(视作什么都没按), 拖动时由拖拽接管.
@@ -152,10 +153,10 @@ DragTriggerKey(hotkey) {
 }
 
 /**
- * 拖拽移动窗口 (不移动光标 / 不跳变)
- * 按下时仅记录基准, 由 SetTimer 轮询鼠标位移后 WinMove.
+ * 拖拽移动窗口
+ * 按下时仅记录基准, 由 SetTimer 轮询鼠标位移后移动窗口.
  */
-StartDragMoveWindowNoCursor() {
+StartDragMoveWindow() {
   global WindowDragState, DRAG_TEST_MODE
   if WindowDragState
     return
@@ -197,24 +198,24 @@ StartDragMoveWindowNoCursor() {
     . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")"
     . " | ox=" (mx0 - x0) " oy=" (my0 - y0))
   DragRestoreDpi(raw)
-  SetTimer(PollDragMoveWindowNoCursor, 10)
+  SetTimer(PollDragMoveWindow, 10)
 }
 
 /**
  * 拖拽移动窗口 - 轮询 (每帧读取光标, 计算位移, 写窗口位置)
  */
-PollDragMoveWindowNoCursor() {
+PollDragMoveWindow() {
   global WindowDragState, DRAG_DEADZONE, DRAG_TEST_MODE
   st := WindowDragState
   if !st
     return
   ; 兜底: 触发键已松开则结束, 防止卡死 (DRAG_TEST_MODE 时跳过, 便于测试)
   if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
-    StopDragWindowNoCursor()
+    StopDragWindow()
     return
   }
   if !WinExist("ahk_id " st.hwnd) {   ; 窗口被关闭
-    StopDragWindowNoCursor()
+    StopDragWindow()
     return
   }
   raw := DragHarmonizeDpi()
@@ -223,7 +224,7 @@ PollDragMoveWindowNoCursor() {
   dy := my - st.my0
   if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
     st.moved := true
-  if !st.moved {   ; 死区之内不改变窗口, 保证"按下瞬间不跳变"
+  if !st.moved {   ; 死区之内不改变窗口位置, 保证按下瞬间窗口不动
     DragLog("[Poll move] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy " moved=false (no write)")
     DragRestoreDpi(raw)
     return
@@ -244,10 +245,11 @@ PollDragMoveWindowNoCursor() {
 }
 
 /**
- * 拖拽缩放窗口 (不移动光标 / 按下瞬间不改变尺寸)
- * 按鼠标位移主轴自动选边/角: 水平为主改左右, 垂直为主改上下, 两者都大改角.
+ * 拖拽缩放窗口
+ * 按下瞬间不改变尺寸; 鼠标移动后按位移主轴自动选边/角:
+ * 水平为主改左右, 垂直为主改上下, 两者都大改角.
  */
-StartDragResizeWindowNoCursor(strategy := "axis") {
+StartDragResizeWindow(strategy := "axis") {
   global WindowDragState, DRAG_TEST_MODE
   if WindowDragState
     return
@@ -284,23 +286,23 @@ StartDragResizeWindowNoCursor(strategy := "axis") {
   DragLog("[Start resize/" strategy "] ctx=" DragCtx() " A_ScreenDPI=" A_ScreenDPI
     . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")")
   DragRestoreDpi(raw)
-  SetTimer(PollDragResizeWindowNoCursor, 10)
+  SetTimer(PollDragResizeWindow, 10)
 }
 
 /**
  * 拖拽缩放窗口 - 轮询 (按位移主轴自动选边/角)
  */
-PollDragResizeWindowNoCursor() {
+PollDragResizeWindow() {
   global WindowDragState, DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H, DRAG_TEST_MODE
   st := WindowDragState
   if !st
     return
   if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
-    StopDragWindowNoCursor()
+    StopDragWindow()
     return
   }
   if !WinExist("ahk_id " st.hwnd) {
-    StopDragWindowNoCursor()
+    StopDragWindow()
     return
   }
   raw := DragHarmonizeDpi()
@@ -355,10 +357,10 @@ PollDragResizeWindowNoCursor() {
  *   无论是否拖动、无论按住时长, 都绝不放行原触发键(未拖动 = 什么都没按).
  *   本函数只负责: 停掉轮询定时器 + 清空拖拽状态, 保证按键不卡住.
  */
-StopDragWindowNoCursor() {
+StopDragWindow() {
   global WindowDragState
-  SetTimer(PollDragMoveWindowNoCursor, 0)
-  SetTimer(PollDragResizeWindowNoCursor, 0)
+  SetTimer(PollDragMoveWindow, 0)
+  SetTimer(PollDragResizeWindow, 0)
   WindowDragState := false
 }
 
