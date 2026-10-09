@@ -103,11 +103,7 @@ func remapKey5(a Action, inAbbrContext bool) string {
 		a.KeysToSend = "{blind}{" + a.RemapToKey + "}"
 		return sendKeys6(a, inAbbrContext)
 	}
-	// 保守式标识 "=" 由 AHK 的 Keymap.Map() 统一解析, 其余 hotkey 路径原样透传即可。
-	// 但重映射这里会自行拼 "*" 前缀: 若把 "=" 原样带上会得到 "*=XButton1"
-	// (AHK 会把 = 当键名), 或 "=*XButton1" 变 "**XButton1"(重复通配符) 而注册失败。
-	// 重映射本身不存在"放行原键"的路径(它只发送替换键), 等价于天然保守式, 故直接剥离 "="。
-	key := strings.TrimLeft(strings.ReplaceAll(a.Hotkey, "=", ""), "*")
+	key := strings.TrimLeft(a.Hotkey, "*")
 	ctx := Cfg.GetHotkeyContext(a)
 	if ctx != "" {
 		ctx = ctx[2:]

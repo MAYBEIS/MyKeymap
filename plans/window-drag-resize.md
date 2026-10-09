@@ -1,19 +1,19 @@
-# 窗口拖拽移动 / 拖拽缩放（不抢光标）设计方案
+# 拖拽移动 / 拖拽缩放窗口 设计方案
 
 > 目标：在「🏠 窗口操作」动作（后端 `id=3`，`windowActions3`）中新增两个功能：
-> 1. 拖拽移动窗口（不移动/不跳变光标）
+> 1. 拖拽移动窗口（按下不变，鼠标实际移动后跟随）
 > 2. 拖拽缩放窗口（按下瞬间不改尺寸，鼠标实际移动后按方向+距离改变，最少尺寸限制）
 >
-> **状态：✅ 已实现（2026-10-08）**。本设计已按下列最终形态落地，不再只是侦察。
+> **状态：✅ 已实现**。本设计已按下列最终形态落地，不再只是侦察。
 >
 > | 项 | 最终实现 |
 > |---|---|
 > | ValueID 17 | 拖拽移动窗口 → `StartDragMoveWindowNoCursor()` / up → `StopDragWindowNoCursor()` |
 > | ValueID 18 | 拖拽缩放窗口 → `StartDragResizeWindowNoCursor("axis")` / up → `StopDragWindowNoCursor()` |
 > | AHK 函数 | `StartDragMoveWindowNoCursor` / `PollDragMoveWindowNoCursor`、`StartDragResizeWindowNoCursor` / `PollDragResizeWindowNoCursor`、`StopDragWindowNoCursor`，位于 [`Actions.ahk`](bin/lib/Actions.ahk:22) |
-> | 全局状态 | `WindowDragState`、`DRAG_DEADZONE=4`、`DRAG_MIN_W=120`、`DRAG_MIN_H=80`、`DRAG_CLICK_MS=250` |
-> | 单击补发 | 全程未超死区且按住 < `DRAG_CLICK_MS`(250ms) ⇒ 视为单击, 补发原触发键; 见 §3.5 |
-> | 缩放策略 | 策略 (a) 按位移主轴自动选边/角（`|dx|>2|dy|` 改左右、`|dy|>2|dx|` 改上下、否则改角） |
+> | 全局状态 | `WindowDragState`、`DRAG_DEADZONE=4`、`DRAG_MIN_W=120`、`DRAG_MIN_H=80` |
+> | 拦截策略 | 完全拦截, 任何情况都不补发/放行原触发键(未拖动 = 什么都没按); 见 §3.5 |
+> | 缩放策略 | 按位移主轴自动选边/角（`|dx|>2|dy|` 改左右、`|dy|>2|dx|` 改上下、否则改角） |
 > | 前端 | [`Window.vue`](config-ui/src/components/actions/Window.vue:23) `group2` 追加 17/18；标签 1701/1702（[`language-map.ts`](config-ui/src/store/language-map.ts:24)） |
 > | 生成形态 | `km.Map("<Hotkey>", _ => <Start><ctx>), km.Map("<Hotkey> up", _ => <Stop><ctx>)` |
 > | 坐标系 | **全程原生 Win32 物理屏幕坐标**: `GetCursorPos`(读光标) / `GetWindowRect`(读窗口) / `SetWindowPos`(写窗口), 与 AHK `CoordMode` 线程局部性、AHK DPI 层无关 (见 §0、§3.6) |
@@ -378,23 +378,18 @@ WinMove(x, y, w, h, hwnd)
 
 因此统一：**同一会话内读写全用 `-3`**（`DragHarmonizeDpi`），`mx0` / `mx` / 窗口 rect 均取自原生 API 的物理屏幕坐标，位移量自洽。多显示器不同缩放的最终观感仍需人工实测（列入人工验收）。
 
-### 3.5 未拖拽短按则补发原键（单击保留）
+### 3.5 完全拦截（不漏键）
 
-**问题**：down/up 成对注册后，触发键的**整段按下-抬起**都被本次功能接管。若把拖拽绑到鼠标侧键（`XButton1`/`XButton2`，原本是“后退/前进”）或键盘键，则**单纯单击**也会被吞掉，丢失其原有功能。
+down/up 成对注册后，触发键的**整段按下-抬起**都由本功能接管，**任何情况下都不补发/放行原触发键**：
 
-**判定与补发**（实现于 [`StopDragWindowNoCursor()`](bin/lib/Actions.ahk:200)，移动/缩放共用）：
+| 情况 | 行为 |
+|---|---|
+| 拖动（位移超过死区 `DRAG_DEADZONE`=4px） | 由拖拽接管，**不放行** |
+| 未拖动（单击 / 长按未动） | **同样不放行**原键，视作“什么都没按” |
 
-| 条件 | 含义 | 动作 |
-|---|---|---|
-| `st.moved = true` | 全程位移曾超过死区 `DRAG_DEADZONE`(4px) | 视为拖动 ⇒ **不补发** |
-| `A_TickCount - st.t0 >= DRAG_CLICK_MS`(250ms) | 按住时间过长 | 视为长按 ⇒ **不补发** |
-| 其余（未拖拽 且 < 250ms） | 短促单击 | 视为单击 ⇒ `Send("{blind}{" key "}")` **补发原键** |
-
-- **阈值**：死区复用 `DRAG_DEADZONE=4`；时间阈值 `DRAG_CLICK_MS=250`（毫秒，可用 `A_TickCount` 与按下时记录的 `st.t0` 比较）。
-- **语义**：只有“快按快松且没动鼠标”才被还原成一次原键点击；**一旦拖动过就完全不补发**（避免拖动结束再触发一次“后退/前进”）。
-- **键名来源**：`st.key` 由 [`DragTriggerKey()`](bin/lib/Actions.ahk:41) 从 `A_ThisHotkey` 提取（去掉 `*`、` up` 等），鼠标键保留为 `XButton1`/`XButton2` 等，可被 `Send` 表达。
-- **安全性**：补发用 `try` 包裹，若键名无法可靠重发则静默跳过，**不影响拖拽主功能**；空键名直接返回。
-- **已知限制**：长按 + 微动（未超死区但超过 250ms）仍会吞掉原功能；这是“接管长按”的固有代价，已在 §4.4 提示。
+- **理由**：绑定到鼠标侧键（`XButton1`/`XButton2`，原本是“后退/前进”）时，若在未拖动时放行原键，会在高频操作中偶发触发“后退/前进”（即用户反馈的“漏键”）。完全拦截可彻底避免。
+- **实现**：[`StopDragWindowNoCursor()`](bin/lib/Actions.ahk:359) 仅「停定时器 + 清理状态」，**不含任何 `Send` 补发**。
+- **键名来源**：`st.key` 由 [`DragTriggerKey()`](bin/lib/Actions.ahk:41) 从 `A_ThisHotkey` 提取（去掉 `*`、` up` 等），仅用于轮询判定触发键是否仍按住。
 
 **最小尺寸**：定义常量 `MIN_W := 200, MIN_H := 150`（可调）；如需精确对齐系统最小值，可后续用 `GetMinMaxInfo`/`WM_GETMINMAXINFO`（AltSnap 用 `CLAMPW/CLAMPH`，[hooks.c:5097](M:/08_Project/VSCODE/AltSnap/hooks.c:5097)）。
 
@@ -408,8 +403,8 @@ WinMove(x, y, w, h, hwnd)
 
 | 新 ValueID | 语义 | 建议 AHK 起始调用 |
 |---|---|---|
-| **17** | 拖拽移动窗口（不抢光标） | `StartDragMoveWindowNoCursor()` |
-| **18** | 拖拽缩放窗口（不抢光标） | `StartDragResizeWindowNoCursor("axis")` |
+| **17** | 拖拽移动窗口 | `StartDragMoveWindowNoCursor()` |
+| **18** | 拖拽缩放窗口 | `StartDragResizeWindowNoCursor("axis")` |
 
 生成形态（**down/up 成对**，沿用 [`KeymapManager.ahk:467-468`](bin/lib/KeymapManager.ahk:467) 范式；`ctx` 复用 [`GetHotkeyContext()`](config-server/internal/script/config.go:148) 以保留窗口过滤）：
 
@@ -494,8 +489,8 @@ const group2 = [
   ...,
   { actionValueID: 13, label: "label:15" },
   { actionValueID: 14, label: "label:16", hideInAbbr: true },
-  { actionValueID: 17, label: "label:1701" },   // 拖拽移动（不抢光标）
-  { actionValueID: 18, label: "label:1702" },   // 拖拽缩放（不抢光标）
+  { actionValueID: 17, label: "label:1701" },   // 拖拽移动窗口
+  { actionValueID: 18, label: "label:1702" },   // 拖拽缩放窗口
 ]
 ```
 
@@ -505,8 +500,8 @@ const group2 = [
 
 ```ts
 // window (新增，避开 1-16 与系统段 17+)
-1701: { zh: "拖拽移动窗口 (不移动光标)", en: "Drag to move window (cursor-free)" },
-1702: { zh: "拖拽缩放窗口 (不移动光标)", en: "Drag to resize window (cursor-free)" },
+1701: { zh: "拖拽移动窗口", en: "Drag to move window" },
+1702: { zh: "拖拽缩放窗口", en: "Drag to resize window" },
 1703: { zh: "缩放方式：按移动方向/固定右下角", en: "Resize: follow direction / bottom-right" },
 ```
 
