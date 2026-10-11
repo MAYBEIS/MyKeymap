@@ -240,20 +240,20 @@ func windowActions3(a Action, inAbbrContext bool) string {
 	if a.ValueID == 14 {
 		return fmt.Sprintf(`km.Map("%[1]s", BindWindow()%s)`, a.Hotkey, Cfg.GetHotkeyContext(a))
 	}
-	// 拖拽移动窗口 / 拖拽缩放窗口, 需要 down/up 成对注册:
-	// down 进入拖拽并记录基准, up 结束拖拽 (松开即停)
+	// 拖拽移动窗口 / 拖拽缩放窗口: 采用「单线程手势」模型 —— 只注册 down,
+	// 按下后在该热键线程内闭环轮询光标与松键状态, 松开即自然结束.
+	// 不再注册 "up" 热键(避免 down/up 双线程竞态导致高频点击漏键).
+	// 热键名原样使用(不添加 "*" 通配): "*" 只影响"忽略修饰键", 与本功能无关,
+	// 擅自添加会扩大用户配置的触发条件.
 	if a.ValueID == 17 || a.ValueID == 18 {
-		// 缩写命令框不支持 down/up 成对注册, 直接返回空串 (UI 已 hideInAbbr)
 		if inAbbrContext {
 			return ""
 		}
-		start, stop := `StartDragMoveWindow()`, `StopDragWindow()`
+		call := `StartDragMoveWindow()`
 		if a.ValueID == 18 {
-			start = `StartDragResizeWindow("axis")`
+			call = `StartDragResizeWindow("axis")`
 		}
-		// ctx 同时作用于 down 与 up, 保证窗口过滤条件一致
-		ctx := Cfg.GetHotkeyContext(a)
-		return fmt.Sprintf(`km.Map("%[1]s", _ => %[2]s%[3]s), km.Map("%[1]s up", _ => %[4]s%[3]s)`, a.Hotkey, start, ctx, stop)
+		return fmt.Sprintf(`km.Map("%[1]s", _ => %s%s)`, a.Hotkey, call, Cfg.GetHotkeyContext(a))
 	}
 	callMap := map[int]string{
 		1:  `SmartCloseWindow()`,

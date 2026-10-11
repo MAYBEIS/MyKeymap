@@ -26,6 +26,9 @@ TrayMenuHandler(ItemName, ItemPos, MyMenu) {
  */
 MyKeymapExit(ExitReason?, ExitCode?) {
   ProcessClose("MyKeymap-CommandInput.exe")
+  ; 退出前释放所有"由本程序按住"的修饰键, 防止 Win/Alt 卡住(#3).
+  ; Actions.ahk 可能未加载, 用 try 做存在性保护.
+  try ReleaseAllHeldModifiers()
   ; 退出前释放 MIDI: 先发 All Notes Off, 再关闭端口, 防止按键未松导致卡音.
   ; Midi.ahk 可能未加载 (如精简构建), 用 try 做存在性保护, 避免报错中断退出.
   try MidiAllNotesOff()
@@ -38,6 +41,9 @@ MyKeymapExit(ExitReason?, ExitCode?) {
  */
 MyKeymapToggleSuspend() {
   fn() {
+    ; 暂停时释放可能卡住的修饰键(#3): 暂停后热键不再处理, 若不释放会永久卡住
+    if !A_IsSuspended
+      try ReleaseAllHeldModifiers()
     Suspend(!A_IsSuspended)
     if (A_IsSuspended) {
       TraySetIcon("./bin/icons/logo2.ico")
@@ -79,6 +85,8 @@ MyKeymapOpenSettings() {
  */
 MyKeymapReload() {
   Tip("Reload")
+  ; 重载会终止当前进程, 先释放卡住的修饰键(#3), 否则新进程启动后仍被系统认为按下
+  try ReleaseAllHeldModifiers()
   Run("MyKeymap.exe")
 }
 

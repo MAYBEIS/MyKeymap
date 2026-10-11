@@ -486,10 +486,24 @@ class Keymap {
     if InStr(hotkeyName, "singlePress") {
       return
     }
+    ; 每个 MapMidi 独占一份本地状态, 同由 down/up 两个嵌套函数捕获共享:
+    ;  - down: 仅在 armed 为 false (首次按下) 时送出 NoteOn, 并置 armed := true;
+    ;          按住物理键时 AHK 会随后续自动重复(键盘 AutoRepeat)反复调用 down 热键,
+    ;          此时 armed 已是 true, 直接 return, 不再重复 NoteOn, 消除「连打」听感.
+    ;  - up:   送出 NoteOff 并把 armed 复位, 使下次按下能重新发声.
+    ; 状态按 MapMidi 调用各持一份, 天然以 (note, channel) 为粒度, 多音/多通道互不影响.
+    ; 注: MidiNoteOn / MidiNoteOff 内部另有 (note, channel) 状态寄存器做第二层保护,
+    ;     即使某个热键被重复注册导致多个闭包同时运行, 也不会叠加触发.
+    armed := false
     downHandler(thisHotkey) {
+      if armed {
+        return
+      }
+      armed := true
       MidiNoteOn(note, channel, velocity)
     }
     upHandler(thisHotkey) {
+      armed := false
       MidiNoteOff(note, channel)
     }
     ; 成对注册 down / up, 对标 RemapInHotIf;
