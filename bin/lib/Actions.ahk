@@ -35,18 +35,30 @@ MakeWindowDraggable() {
 global WindowDragState := false
 global DRAG_DEADZONE := 4                       ; 死区(px), 超过才认为"开始拖动"
 global DRAG_MIN_W := 120, DRAG_MIN_H := 80      ; 缩放的最小宽高
-; 可选调试开关(默认关闭): 置 true 时把拖拽关键事件写入 %TEMP%\mk_drag.log, 便于排查。
+; 调试日志开关(默认关闭). 开启时写 A_ScriptDir\drag_debug.log, 便于真实使用中取证.
 global DRAG_DEBUG := false
-global DRAG_DEBUG_FILE := A_Temp . "\mk_drag.log"
+; 测试开关(默认关闭, 不影响正常运行路径): 置 true 时 Poll 跳过"按键已松开则自停"的兜底,
+; 便于测试脚本用真实 SetCursorPos 驱动光标、无需真实按键即可复现/验证坐标路径.
+global DRAG_TEST_MODE := false
 
 /**
- * 可选调试日志 (仅 DRAG_DEBUG=true 时写文件; 默认关闭, 不产生任何 I/O)。
+ * 调试日志 (仅 DRAG_DEBUG=true 时写文件)
  */
-DragDebugLog(s) {
-  global DRAG_DEBUG, DRAG_DEBUG_FILE
+DragLog(s) {
+  global DRAG_DEBUG
   if !DRAG_DEBUG
     return
-  try FileAppend(s "`r`n", DRAG_DEBUG_FILE, "UTF-8")
+  try FileAppend(s "`r`n", A_ScriptDir . "\drag_debug.log", "UTF-8")
+}
+
+/**
+ * 清空调试日志 (每次 Start 调用)
+ */
+DragLogReset() {
+  global DRAG_DEBUG
+  if !DRAG_DEBUG
+    return
+  try FileDelete(A_ScriptDir . "\drag_debug.log")
 }
 
 /**
@@ -141,109 +153,110 @@ DragTriggerKey(hotkey) {
 }
 
 /**
- * 触发键是否"物理按下".
- *
- * 优先用 GetAsyncKeyState(反映驱动的真实物理键态), 而不是 AHK 内部的
- * GetKeyState(key,"P"): 当 Hook 的 up 事件丢失/被旁路时, AHK 内部键态可能
- * 卡在"按下", 导致轮询永久不停(#2 缩放后交互异常的残留定时器来源).
- * 异步键态可直接绕过该卡死状态, 保证物理松开后必定自停.
- * VK 未知时回退到 GetKeyState("P").
- */
-DragKeyPhysicallyDown(key) {
-  vk := GetKeyVK(key)
-  if vk
-    return (DllCall("GetAsyncKeyState", "int", vk, "short") & 0x8000) ? true : false
-  return GetKeyState(key, "P")
-}
-
-/**
  * 拖拽移动窗口
  * 按下时仅记录基准, 由 SetTimer 轮询鼠标位移后移动窗口.
  */
-/**
- * 拖拽移动窗口 (单线程手势模型)
- *
- * 按下后在本热键线程内闭环: 轮询光标位移 + 检测触发键是否仍物理按下,
- * 松开即自然退出。全程只读/写窗口几何, 绝不调用 MouseMove/SetCursorPos。
- *
- * 为什么不再用 down/up 双热键 + SetTimer:
- *   双线程(down 在热键线程 / up 在另一热键线程)存在配对竞态: 快速点击时若
- *   down 处理器尚未返回, up 可能延迟/被抑制, 导致 up 未被拦截 → 前台收到
- *   "孤立 up" → 被判为一次点击(漏键, #1)。单线程闭环从根本上消除该竞态,
- *   且与仓库既有 MouseKeymap._moveMouse / BindWindow 的范式一致。
- */
 StartDragMoveWindow() {
-  global DRAG_DEADZONE, WindowDragState
-  ; 同一时刻只允许一个拖拽会话
-  if (WindowDragState)
+  global WindowDragState, DRAG_TEST_MODE
+  if WindowDragState
     return
-  ; 全程原生 Win32 物理屏幕坐标: GetCursorPos / GetWindowRect / SetWindowPos,
-  ; 与 AHK CoordMode 线程局部性、DPI 层无关(见 §0 复盘)。
+  ; 全程使用原生 Win32 物理屏幕坐标: GetCursorPos / GetWindowRect / SetWindowPos.
+  ; 不再依赖 AHK 的 MouseGetPos/WinGetPos/WinMove, 因而与 CoordMode 线程局部性、
+  ; AHK DPI 层均无关, 从根上杜绝"Start/Poll 坐标系不一致"导致的跳变与抖动.
   raw := DragHarmonizeDpi()
-  DragRawCursor(&mx0, &my0)
-  hwnd := DragWindowFromPoint(mx0, my0)
+  DragRawCursor(&mx0, &my0)                    ; 只读光标, 绝不 SetCursorPos
+  hwnd := DragWindowFromPoint(mx0, my0)        ; 顶层窗口(自动上溯出子控件)
   if !hwnd
     hwnd := DllCall("GetForegroundWindow", "ptr")
   if !hwnd {
     DragRestoreDpi(raw)
     return
   }
-  if (WinGetMinMax(hwnd) = -1) {          ; 最小化窗口无几何意义, 跳过
+  ; 最小化窗口无几何意义, 跳过
+  if (WinGetMinMax(hwnd) = -1) {
     DragRestoreDpi(raw)
     return
   }
-  if (WinGetMinMax(hwnd) = 1) {           ; 最大化/全屏先还原
+  ; 最大化/全屏先还原, 否则无法拖动
+  if (WinGetMinMax(hwnd) = 1) {
     WinRestore(hwnd)
     Sleep 50
   }
   DragRawRect(hwnd, &x0, &y0, &w0, &h0)
-  ox := mx0 - x0, oy := my0 - y0          ; 抓取点相对窗口左上角的偏移(恒定)
-  lx := x0, ly := y0
-  key := DragTriggerKey(A_ThisHotkey)
-  moved := false
-  WindowDragState := { mode: "move", hwnd: hwnd, key: key }
-  SetThreadDpiAwarenessContextSafe()       ; 统一上下文, 之后不再逐帧切换
-  try {
-    ; ── 手势闭环: 直到触发键物理松开或窗口消失 ──
-    while DragKeyPhysicallyDown(key) {
-      if !WinExist("ahk_id " hwnd)
-        break
-      DragRawCursor(&mx, &my)
-      dx := mx - mx0, dy := my - my0
-      if (!moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE))
-        moved := true
-      if (!moved) {                        ; 死区之内不动窗口(按下瞬间不跳变)
-        Sleep 10
-        continue
-      }
-      tgtx := mx - ox, tgty := my - oy
-      if (tgtx != lx || tgty != ly) {      ; 去抖: 有变化才写
-        ; SWP_NOSIZE(0x1)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x15
-        DragSetWindowPos(hwnd, tgtx, tgty, 0, 0, 0x15)
-        lx := tgtx, ly := tgty
-      }
-      Sleep 10
-    }
-  } finally {
-    ; 结束清理: 与 StopDragWindow 等价, 保证任何退出路径都不残留状态/定时器
-    DllCall("ReleaseCapture")
-    DragRestoreDpi(raw)
-    WindowDragState := false
+  WindowDragState := {
+    mode: "move",
+    hwnd: hwnd,
+    key: DragTriggerKey(A_ThisHotkey),
+    mx0: mx0, my0: my0,
+    x0: x0, y0: y0, w0: w0, h0: h0,
+    ox: mx0 - x0, oy: my0 - y0,   ; 抓取点相对窗口左上角的偏移, 移动时保持不变
+    lx: x0, ly: y0, lw: w0, lh: h0,   ; 上一帧实际写入的目标矩形(去抖: 相同则跳过写)
+    moved: false
   }
+  DragLogReset()
+  DragLog("[Start move] ctx=" DragCtx() " A_ScreenDPI=" A_ScreenDPI
+    . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")"
+    . " | ox=" (mx0 - x0) " oy=" (my0 - y0))
+  DragRestoreDpi(raw)
+  SetTimer(PollDragMoveWindow, 10)
 }
 
 /**
- * 拖拽缩放窗口 (单线程手势模型)
- * 按下瞬间不改变尺寸; 鼠标移动超过死区后, 按位移主轴自动选边/角:
- * 水平为主改左右, 垂直为主改上下, 两者都大改角。
+ * 拖拽移动窗口 - 轮询 (每帧读取光标, 计算位移, 写窗口位置)
+ */
+PollDragMoveWindow() {
+  global WindowDragState, DRAG_DEADZONE, DRAG_TEST_MODE
+  st := WindowDragState
+  if !st
+    return
+  ; 兜底: 触发键已松开则结束, 防止卡死 (DRAG_TEST_MODE 时跳过, 便于测试)
+  if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
+    StopDragWindow()
+    return
+  }
+  if !WinExist("ahk_id " st.hwnd) {   ; 窗口被关闭
+    StopDragWindow()
+    return
+  }
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx, &my)              ; 原生物理屏幕坐标, 与 Start 完全同源
+  dx := mx - st.mx0
+  dy := my - st.my0
+  if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
+    st.moved := true
+  if !st.moved {   ; 死区之内不改变窗口位置, 保证按下瞬间窗口不动
+    DragLog("[Poll move] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy " moved=false (no write)")
+    DragRestoreDpi(raw)
+    return
+  }
+  ; 新位置 = 光标 - 恒定抓取偏移, 尺寸不变 ⇒ 抓取点始终吸附光标, 无初始位移
+  tgtx := mx - st.ox, tgty := my - st.oy
+  ; 去抖: 目标矩形与上一帧一致(无可视变化)则跳过写, 避免冗余 SetWindowPos 引起的抖动
+  if (tgtx != st.lx || tgty != st.ly) {
+    ; SWP_NOSIZE(0x1)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x15
+    DragSetWindowPos(st.hwnd, tgtx, tgty, 0, 0, 0x15)
+    st.lx := tgtx, st.ly := tgty
+  }
+  DragRestoreDpi(raw)
+  DragRawRect(st.hwnd, &ax, &ay, &aw, &ah)
+  DragLog("[Poll move] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy
+    . " | tgt=(" tgtx "," tgty ") | actualRect=(" ax "," ay "," aw "," ah ")"
+    . " | err=(" (ax - tgtx) "," (ay - tgty) ")")
+}
+
+/**
+ * 拖拽缩放窗口
+ * 按下瞬间不改变尺寸; 鼠标移动后按位移主轴自动选边/角:
+ * 水平为主改左右, 垂直为主改上下, 两者都大改角.
  */
 StartDragResizeWindow(strategy := "axis") {
-  global DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H, WindowDragState
-  if (WindowDragState)
+  global WindowDragState, DRAG_TEST_MODE
+  if WindowDragState
     return
+  ; 同移动: 全程原生 Win32 物理屏幕坐标, 与 CoordMode 线程局部性/DPI 层无关.
   raw := DragHarmonizeDpi()
-  DragRawCursor(&mx0, &my0)
-  hwnd := DragWindowFromPoint(mx0, my0)
+  DragRawCursor(&mx0, &my0)                    ; 只读光标, 绝不 SetCursorPos
+  hwnd := DragWindowFromPoint(mx0, my0)        ; 顶层窗口(自动上溯出子控件)
   if !hwnd
     hwnd := DllCall("GetForegroundWindow", "ptr")
   if !hwnd {
@@ -259,74 +272,96 @@ StartDragResizeWindow(strategy := "axis") {
     Sleep 50
   }
   DragRawRect(hwnd, &x0, &y0, &w0, &h0)
-  lx := x0, ly := y0, lw := w0, lh := h0
-  key := DragTriggerKey(A_ThisHotkey)
-  moved := false
-  WindowDragState := { mode: "resize", hwnd: hwnd, key: key }
-  SetThreadDpiAwarenessContextSafe()
-  try {
-    while DragKeyPhysicallyDown(key) {
-      if !WinExist("ahk_id " hwnd)
-        break
-      DragRawCursor(&mx, &my)
-      dx := mx - mx0, dy := my - my0
-      if (!moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE))
-        moved := true
-      if (!moved) {                        ; 按下瞬间不改尺寸
-        Sleep 10
-        continue
-      }
-      nx := x0, ny := y0, nw := w0, nh := h0
-      if (strategy = "bottomright") {
-        nw := w0 + dx
-        nh := h0 + dy
-      } else {
-        ax := Abs(dx), ay := Abs(dy)
-        if (ax > ay * 2) {
-          nw := w0 + dx                    ; 水平为主: 只改左右边
-        } else if (ay > ax * 2) {
-          nh := h0 + dy                    ; 垂直为主: 只改上下边
-        } else {
-          nw := w0 + dx                    ; 两者都大: 同时改角
-          nh := h0 + dy
-        }
-      }
-      nw := Max(nw, DRAG_MIN_W)
-      nh := Max(nh, DRAG_MIN_H)
-      if (nx != lx || ny != ly || nw != lw || nh != lh) {
-        ; SWP_NOMOVE(0x2)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x16
-        DragSetWindowPos(hwnd, nx, ny, nw, nh, 0x16)
-        lx := nx, ly := ny, lw := nw, lh := nh
-      }
-      Sleep 10
-    }
-  } finally {
-    DllCall("ReleaseCapture")
-    DragRestoreDpi(raw)
-    WindowDragState := false
+  WindowDragState := {
+    mode: "resize",
+    hwnd: hwnd,
+    key: DragTriggerKey(A_ThisHotkey),
+    strategy: strategy,
+    mx0: mx0, my0: my0,
+    x0: x0, y0: y0, w0: w0, h0: h0,
+    lx: x0, ly: y0, lw: w0, lh: h0,   ; 上一帧实际写入的目标矩形(去抖)
+    moved: false
   }
+  DragLogReset()
+  DragLog("[Start resize/" strategy "] ctx=" DragCtx() " A_ScreenDPI=" A_ScreenDPI
+    . " | cursorScreen=(" mx0 "," my0 ") rect=(" x0 "," y0 "," w0 "," h0 ")")
+  DragRestoreDpi(raw)
+  SetTimer(PollDragResizeWindow, 10)
 }
 
 /**
- * 结束拖拽时的兜底清理 (保留对外符号, 供外部/旧产物调用, 幂等)。
+ * 拖拽缩放窗口 - 轮询 (按位移主轴自动选边/角)
+ */
+PollDragResizeWindow() {
+  global WindowDragState, DRAG_DEADZONE, DRAG_MIN_W, DRAG_MIN_H, DRAG_TEST_MODE
+  st := WindowDragState
+  if !st
+    return
+  if !DRAG_TEST_MODE && !GetKeyState(st.key, "P") {
+    StopDragWindow()
+    return
+  }
+  if !WinExist("ahk_id " st.hwnd) {
+    StopDragWindow()
+    return
+  }
+  raw := DragHarmonizeDpi()
+  DragRawCursor(&mx, &my)              ; 原生物理屏幕坐标, 与 Start 完全同源
+  dx := mx - st.mx0
+  dy := my - st.my0
+  if !st.moved && (Abs(dx) > DRAG_DEADZONE || Abs(dy) > DRAG_DEADZONE)
+    st.moved := true
+  if !st.moved {   ; 满足"按下瞬间不改变尺寸"
+    DragLog("[Poll resize] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy " moved=false (no write)")
+    DragRestoreDpi(raw)
+    return
+  }
+
+  ; 默认左上角固定, 右/下边跟随鼠标
+  nx := st.x0, ny := st.y0, nw := st.w0, nh := st.h0
+  if (st.strategy = "bottomright") {
+    ; 策略(b): 固定右下角, 宽高直接跟随位移
+    nw := st.w0 + dx
+    nh := st.h0 + dy
+  } else {
+    ; 策略(a): 按位移主轴自动选边/角
+    ax := Abs(dx), ay := Abs(dy)
+    if (ax > ay * 2) {
+      nw := st.w0 + dx                       ; 水平为主: 只改左右边
+    } else if (ay > ax * 2) {
+      nh := st.h0 + dy                       ; 垂直为主: 只改上下边
+    } else {
+      nw := st.w0 + dx                       ; 两者都大: 同时改角
+      nh := st.h0 + dy
+    }
+  }
+  nw := Max(nw, DRAG_MIN_W)   ; 最小尺寸钳制
+  nh := Max(nh, DRAG_MIN_H)
+  ; 去抖: 目标矩形与上一帧一致(无可视变化)则跳过写
+  if (nx != st.lx || ny != st.ly || nw != st.lw || nh != st.lh) {
+    ; SWP_NOMOVE(0x2)|SWP_NOZORDER(0x4)|SWP_NOACTIVATE(0x10) = 0x16
+    DragSetWindowPos(st.hwnd, nx, ny, nw, nh, 0x16)
+    st.lx := nx, st.ly := ny, st.lw := nw, st.lh := nh
+  }
+  DragRestoreDpi(raw)
+  DragRawRect(st.hwnd, &ax2, &ay2, &aw2, &ah2)
+  DragLog("[Poll resize] ctx=" DragCtx() " mx=" mx " my=" my " dx=" dx " dy=" dy
+    . " | tgt=(" nx "," ny "," nw "," nh ") | actualRect=(" ax2 "," ay2 "," aw2 "," ah2 ")"
+    . " | err=(" (ax2 - nx) "," (ay2 - ny) "," (aw2 - nw) "," (ah2 - nh) ")")
+}
+
+/**
+ * 结束拖拽 (移动/缩放共用) - 停定时器并清理
  *
- * 单线程手势模型下手势在 StartDrag*Window 的 finally 内自行收尾,
- * 本函数仅作为"强制清场"的兜底入口(例如窗口被关闭/异常路径)。
+ * 拦截策略: 完全拦截, 不补发原键.
+ *   无论是否拖动、无论按住时长, 都绝不放行原触发键(未拖动 = 什么都没按).
+ *   本函数只负责: 停掉轮询定时器 + 清空拖拽状态, 保证按键不卡住.
  */
 StopDragWindow() {
   global WindowDragState
-  try DllCall("ReleaseCapture")
-  SetThreadDpiAwarenessContextSafe()
+  SetTimer(PollDragMoveWindow, 0)
+  SetTimer(PollDragResizeWindow, 0)
   WindowDragState := false
-}
-
-/**
- * 把本线程 DPI 感知上下文复位为 PER_MONITOR_AWARE(-3) 的"安全哨兵".
- * DllCall 会自动绑定到本行自己所在的系统 DLL, 不依赖 AutoHotkey64.exe 的导入表,
- * 便于在无法确定的前提下仍然成功复位 DPI 上下文.
- */
-SetThreadDpiAwarenessContextSafe() {
-  try DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
 }
 
 /**
@@ -639,17 +674,26 @@ InsertSpaceBetweenZHAndEn() {
   PasteToPrograms(text)
 }
 
+/**
+ * 触发键是否"物理按下" (GetAsyncKeyState, 反应驱动的真实键态)。
+ * 优先用它而不是 AHK 内部 GetKeyState(key,"P"): 当 Hook 的 up 事件丢失/被旁路时,
+ * AHK 内部键态可能卡在"按下", 导致 KeyWait 永久阻塞、修饰键永久卡住(#3)。
+ */
+DragKeyPhysicallyDown(key) {
+  vk := GetKeyVK(key)
+  if vk
+    return (DllCall("GetAsyncKeyState", "int", vk, "short") & 0x8000) ? true : false
+  return GetKeyState(key, "P")
+}
+
 ; ── 修饰键保持的全局看门狗状态 (#3 防卡死) ──
-; g_HeldModifiers: Map<modifier, tickStart> —— 记录"已发出 Down 尚未 Up"的修饰键。
-; 看门狗低频扫描, 超时即强制补发 Up, 即使持有它的线程被 Suspend/Reload/中止也能兜底。
+; g_HeldModifiers: Map<modifier, tickStart> —— "已发 Down 尚未 Up" 的修饰键。
+; 看门狗低频扫描, 超时即强制补发 Up; 即使持有它的线程被 Suspend/Reload/中止也能兜底。
 global g_HeldModifiers := Map()
-global MOD_HOLD_TIMEOUT_MS := 5000        ; 单次保持上限 5s (原 30s 过长)
+global MOD_HOLD_TIMEOUT_MS := 5000        ; 单次保持上限 5s (防御性)
 global MOD_WATCHDOG_MS := 500             ; 看门狗扫描间隔
 
-/**
- * 修饰键是否被"用户真实按住"(GetAsyncKeyState 物理键态)。
- * 若是, 则不应由我们发送 Down/Up, 以免抢占用户真实按键。
- */
+/** 修饰键是否被用户真实按住(物理键态); 若是则不由我们接管, 避免抢占真实按键 */
 ModifierPhysicallyDown(modifier) {
   vk := GetKeyVK(modifier)
   if !vk
@@ -657,27 +701,21 @@ ModifierPhysicallyDown(modifier) {
   return (DllCall("GetAsyncKeyState", "int", vk, "short") & 0x8000) ? true : false
 }
 
-/**
- * 释放单个修饰键(幂等): 发 Up, 再从看门狗表移除。
- */
+/** 释放单个修饰键(幂等): 发 Up 并从看门狗表移除 */
 ReleaseModifier(modifier) {
   global g_HeldModifiers
   try Send("{blind}{" modifier " Up}")
   try g_HeldModifiers.Delete(modifier)
 }
 
-/**
- * 释放所有"由本程序按住"的修饰键。供退出/暂停/重载/看门狗统一调用。
- */
+/** 释放所有"由本程序按住"的修饰键。供退出/暂停/重载/看门狗统一调用 */
 ReleaseAllHeldModifiers() {
   global g_HeldModifiers
   for modifier, _ in g_HeldModifiers.Clone()
     ReleaseModifier(modifier)
 }
 
-/**
- * 看门狗: 扫描 g_HeldModifiers, 超过 MOD_HOLD_TIMEOUT_MS 仍未释放的强制 Up。
- */
+/** 看门狗: 超过 MOD_HOLD_TIMEOUT_MS 仍保持的修饰键强制释放 */
 ModifierWatchdog() {
   global g_HeldModifiers, MOD_HOLD_TIMEOUT_MS
   if (g_HeldModifiers.Count = 0)
@@ -692,17 +730,16 @@ ModifierWatchdog() {
 /**
  * 按住修饰键, 直到触发键松开后释放 (#3 防卡死)
  *
- * 设计要点(修复 "Win/Alt 始终被视作按下"):
- *   1) Down/Up 用 try/finally 包成**原子对**: 任何异常/中断路径都会执行 finally 发出 Up;
- *   2) 跨线程**看门狗**兜底: 即使本线程被 Suspend/Reload/中止, 看门狗也会强制 Up;
- *   3) 轮询"物理键态"(GetAsyncKeyState) 判断触发键是否已松开, 避开 AHK 内部键态卡死;
- *   4) 超时 5s (原 30s) 防止极端情况下长期占用修饰键;
- *   5) 若用户**真实**按着该修饰键, 则不发送 Down/Up, 避免抢占真实按键。
+ * 修复 "Win/Alt 始终被视作按下" / "滚轮等长按松手仍触发":
+ *   1) **不再用无超时 KeyWait** (up 丢失即永久阻塞), 改为轮询物理键态;
+ *   2) Down/Up 用 try/finally 包成原子对, 任何异常路径都会发出 Up;
+ *   3) 跨线程看门狗兜底 (线程被 Suspend/Reload/中止也能释放);
+ *   4) 5s 超时兜底;
+ *   5) 用户真实按着该修饰键时不接管。
  */
 HoldModifierUntilKeyUp(modifier) {
   global g_HeldModifiers, MOD_HOLD_TIMEOUT_MS, MOD_WATCHDOG_MS
   key := ExtractWaitKey(A_ThisHotkey)
-  ; 用户真实按着该修饰键 -> 交给用户, 不接管
   if ModifierPhysicallyDown(modifier) {
     while DragKeyPhysicallyDown(key)
       Sleep 10
@@ -712,7 +749,6 @@ HoldModifierUntilKeyUp(modifier) {
   try {
     Send("{blind}{" modifier " Down}")
     g_HeldModifiers[modifier] := A_TickCount
-    ; 最多保持 5s; 或触发键物理松开即结束
     t0 := A_TickCount
     while (A_TickCount - t0 < MOD_HOLD_TIMEOUT_MS) {
       if !DragKeyPhysicallyDown(key)
@@ -720,9 +756,7 @@ HoldModifierUntilKeyUp(modifier) {
       Sleep 10
     }
   } finally {
-    ; 原子收尾: 无条件释放该修饰键, 并从看门狗表移除
     ReleaseModifier(modifier)
-    ; 若已无任何保持中的修饰键, 关掉看门狗定时器
     if (g_HeldModifiers.Count = 0)
       SetTimer(ModifierWatchdog, 0)
   }

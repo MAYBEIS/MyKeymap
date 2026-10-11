@@ -173,6 +173,8 @@ InitKeymap()
   ; Custom Hotkeys
   km1 := KeymapManager.NewKeymap("customHotkeys", "Custom Hotkeys", "", "")
   km := km1
+  km.Map("XButton1", _ => StartDragMoveWindow()), km.Map("XButton1 up", _ => StopDragWindow())
+  km.Map("XButton2", _ => StartDragResizeWindow("axis")), km.Map("XButton2 up", _ => StopDragWindow())
   km.RemapInHotIf("F3", "F9")
   km.RemapInHotIf("F4", "F10")
   km.RemapInHotIf("PgUp", "End")
@@ -207,9 +209,9 @@ InitTrayMenu() {
 
 
 #HotIf
-PgUp::End
+F4::F10
 RAlt::RWin
 F3::F9
-F4::F10
+PgUp::End
 
 #HotIf
