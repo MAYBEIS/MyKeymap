@@ -19,4 +19,4 @@ CommandInputSkin.txt
 tools/loopMIDI.exe
 tmp_ahk_out.txt
 *.txt
-
+bin/MyKeymap.ahk
