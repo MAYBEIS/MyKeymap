@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-contrib/cors"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"settings/internal/command"
 	"settings/internal/matrix"
+	"settings/internal/midi"
 	"settings/internal/script"
 	"text/template"
 	"time"
@@ -34,7 +36,12 @@ func main() {
 	debug := len(os.Args) == 2 && os.Args[1] == "debug"
 
 	if !debug {
-		go matrix.DigitalRain(hasError, rainDone)
+		if hideMatrix() {
+			close(rainDone)
+			fmt.Println("MyKeymap config server is running...")
+		} else {
+			go matrix.DigitalRain(hasError, rainDone)
+		}
 	}
 	if debug {
 		hasError = nil
@@ -62,6 +69,7 @@ func server(hasError chan<- struct{}, rainDone <-chan struct{}, debug bool) {
 	router.PUT("/config", SaveConfigHandler(debug))
 	router.POST("/server/command/:id", ServerCommandHandler)
 	router.GET("/shortcuts", GetShortcutsHandler)
+	router.GET("/midi-ports", GetMidiPortsHandler)
 
 	// 先尝试 12333 端口, 失败了则用随机端口. 因为 12333 端口可能已被占用, 或者被禁:
 	// An attempt was made to access a socket in a way forbidden by its access permissions.
@@ -146,6 +154,16 @@ func GetShortcutsHandler(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, data)
+}
+
+// GetMidiPortsHandler 返回本机 MIDI 输出端口名列表。
+// 枚举失败或不支持时降级返回空列表 + 200, 便于前端优雅降级。
+func GetMidiPortsHandler(c *gin.Context) {
+	ports, err := midi.OutputPortNames()
+	if err != nil || ports == nil {
+		ports = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"ports": ports})
 }
 
 func PanicHandler(hasError chan<- struct{}, rainDone <-chan struct{}) gin.HandlerFunc {
@@ -259,4 +277,24 @@ func saveHelpPageHtml(html string) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func hideMatrix() bool {
+	var config struct {
+		Options struct {
+			HideMatrix bool `json:"hideMatrix"`
+		} `json:"options"`
+	}
+
+	data, err := os.ReadFile("../data/config.json")
+	if err != nil {
+		return false
+	}
+
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return false
+	}
+
+	return config.Options.HideMatrix
 }
